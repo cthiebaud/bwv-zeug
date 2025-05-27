@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""
+BWV Processing Tasks - Generic build system for Bach scores
+
+Usage from any BWV project:
+  invoke -f ../bwv-zeug/invoke/tasks.py build_pdf
+"""
+
+import builtins
+import hashlib
+import inspect
+import json
+import os
+from datetime import datetime
+from invoke import task
+from pathlib import Path
+
+# =============================================================================
+# git project detection
+# =============================================================================
+
+import subprocess
+
+def detect_project_name():
+    """Detect project name from git repository root directory."""
+    try:
+        result = subprocess.run(['git', 'rev-parse', '--show-toplevel'], 
+                              capture_output=True, text=True, check=True)
+        project_name = Path(result.stdout.strip()).name
+        
+        # Verify the main .ly file exists
+        main_ly_file = f"{project_name}.ly"
+        if not Path(main_ly_file).exists():
+            raise RuntimeError(f"Main LilyPond file '{main_ly_file}' not found")
+        
+        print(f"🎼 Detected project: {project_name}")
+        return project_name
+        
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        raise RuntimeError(
+            "Cannot determine project name: not in a git repository. "
+            "Either run from a git repo or provide explicit file arguments."
+        )
+
+def get_shared_ly_sources():
+    """Auto-detect LilyPond dependencies by parsing \\include statements."""
+    project_name = detect_project_name()
+    main_file = Path(f"{project_name}.ly")
+    
+    if not main_file.exists():
+        return []
+    
+    dependencies = set()
+    to_process = [main_file]
+    processed = set()
+    
+    while to_process:
+        current_file = to_process.pop()
+        if current_file in processed:
+            continue
+        processed.add(current_file)
+        
+        try:
+            content = current_file.read_text(encoding='utf-8')
+            
+            # Find \include "filename" statements
+            import re
+            includes = re.findall(r'\\include\s+"([^"]+)"', content)
+            
+            for include_file in includes:
+                include_path = Path(include_file)
+                
+                # Handle relative paths
+                if not include_path.is_absolute():
+                    include_path = current_file.parent / include_path
+                
+                if include_path.exists():
+                    dependencies.add(include_path)
+                    # Recursively process included files
+                    if include_path.suffix in ['.ly', '.ily']:
+                        to_process.append(include_path)
+                        
+        except Exception as e:
+            print(f"⚠️  Warning: Could not parse {current_file}: {e}")
+    
+    return list(dependencies)
+
+# ==============================================================================
+# ENHANCED PRINT FUNCTION WITH CONDITIONAL TIMESTAMPING
+# ==============================================================================
+# This monkey-patch globally replaces Python's built-in print() function to:
+# 1. Always flush output immediately (fixes log ordering issues)
+# 2. Add timestamps only when output is redirected to files (preserves clean console output)
+
+# Store reference to original print function before we replace it
+_original_print = builtins.print
+
+def smart_print(*args, **kwargs):
+    """
+    Enhanced print function that conditionally adds timestamps and always flushes.
+    
+    Behavior:
+    - Interactive use: Clean output without timestamps
+    - Redirected to file: Timestamped output for debugging
+    - Always flushes immediately to prevent output ordering issues
+    """
+    # Only add timestamps when redirected to a file
+    if not os.isatty(1):  # stdout is not a terminal (redirected to file/pipe)
+        # Generate timestamp in HH:MM:SS.mmm format (millisecond precision)
+        timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]  # [:-3] truncates microseconds to milliseconds
+        
+        # Prepend timestamp to all arguments
+        if args:
+            args = (f"[{timestamp}]", *args)  # Add timestamp as first argument
+        else:
+            args = (f"[{timestamp}]",)        # Handle edge case of print() with no args
+    
+    # Call original print with all arguments, forcing flush=True for consistent output ordering
+    return _original_print(*args, **kwargs, flush=True)
+
+# Globally replace the built-in print function
+# This affects ALL Python code in this process, including imported modules and scripts
+builtins.print = smart_print
+
+# ==============================================================================
+# BUILD CACHE SYSTEM
+# ==============================================================================
+
+def hash_file(path):
+    """Compute SHA256 hash of a file for change detection."""
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(8192):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+def load_cache(cache_file=".build_cache.json"):
+    """Load build cache from disk."""
+    cache_path = Path(cache_file)
+    if cache_path.exists():
+        return json.loads(cache_path.read_text())
+    return {}
+
+def save_cache(cache, cache_file=".build_cache.json"):
+    """Save build cache to disk."""
+    cache_path = Path(cache_file)
+    cache_path.write_text(json.dumps(cache, indent=2))
+
+def sources_changed(task_name, source_paths, cache_file=".build_cache.json"):
+    """
+    Check if any input file changed since last build.
+    
+    Args:
+        task_name: Name of the task (for cache key)
+        source_paths: List of Path objects to check
+        cache_file: Path to cache file
+        
+    Returns:
+        bool: True if any source file changed
+    """
+    cache = load_cache(cache_file)
+    current_hashes = {str(p): hash_file(p) for p in source_paths if p.exists()}
+    cached_hashes = cache.get(task_name, {})
+    changed = current_hashes != cached_hashes
+    if changed:
+        cache[task_name] = current_hashes
+        save_cache(cache, cache_file)
+    return changed
+
+# ==============================================================================
+# FILE MANAGEMENT UTILITIES
+# ==============================================================================
+
+def remove_outputs(*filenames, force=True):
+    """
+    Remove output files with nice logging.
+    
+    Args:
+        *filenames: Files to remove
+        force: If True, ignore missing files
+    """
+    deleted = []
+    for name in filenames:
+        path = Path(name)
+        if path.exists():
+            path.unlink()
+            deleted.append(path.name)
+
+    print("�️  Deleted:", end="")
+    if deleted:
+        print()  # Add newline for multi-line format
+        for d in deleted:
+            print(f"   └── {d}")
+    else:
+        print(" ∅")  # Continue on same line
+
+def get_file_info(filename, name):
+    """
+    Get file information for status reporting.
+    
+    Args:
+        filename: Path to file
+        name: Display name for file
+        
+    Returns:
+        tuple: (mtime, name, filename, size, exists)
+    """
+    path = Path(filename)
+    if path.exists():
+        mtime = path.stat().st_mtime
+        size = path.stat().st_size
+        return (mtime, name, filename, size, True)
+    else:
+        return (0, name, filename, 0, False)  # Missing files sort first
+
+# ==============================================================================
+# SMART TASK RUNNER
+# ==============================================================================
+
+def smart_task(c, *, sources, targets, commands, force=False, cache_file=".build_cache.json"):
+    """
+    Unified smart task runner with caching and progress reporting.
+    
+    Args:
+        c: Invoke context
+        sources: List of source file paths
+        targets: List of target file paths/names
+        commands: List of shell commands to run
+        force: If True, force rebuild regardless of cache
+        cache_file: Path to cache file
+    """
+    task_name = inspect.stack()[1].function
+    print(f"")
+    print(f"[{task_name}]")
+    
+    if force or sources_changed(task_name, sources, cache_file):
+        remove_outputs(*targets)
+        print(f"� Rebuilding {task_name}...")
+        
+        for cmd in commands:
+            # Run subprocess commands with unbuffered output for better logging
+            if cmd.startswith('python3 '):
+                cmd = cmd.replace('python3 ', 'python3 -u ')
+            c.run(cmd)
+        
+        # Validate that all targets were actually created
+        missing_targets = [t for t in targets if not Path(t).exists()]
+        if missing_targets:
+            print(f"❌ Error: Some targets were not created:")
+            for target in missing_targets:
+                print(f"   • {target}")
+            raise RuntimeError(f"Task {task_name} failed to create all targets")
+        
+        if targets:
+            print("✅ Generated:")
+            for t in targets:
+                print(f"   └── {t}")
+        else:
+            print(f"✅ Task {task_name} completed")
+    else:
+        # Validate targets exist even when up-to-date
+        missing_targets = [t for t in targets if not Path(t).exists()]
+        if missing_targets:
+            print(f"⚠️  Cache inconsistency detected - targets missing:")
+            for target in missing_targets:
+                print(f"   • {target}")
+            print(f"� Forcing rebuild due to missing targets...")
+            # Recursively call with force=True to rebuild
+            return smart_task(c, sources=sources, targets=targets, commands=commands, force=True, cache_file=cache_file)
+        
+        if targets:
+            print("✅ Up to date:")
+            for t in targets:
+                print(f"   └── {t}")
+        else:
+            print(f"✅ Up to date: {task_name}")
+
+def print_file_status(file_path, description):
+    """Print formatted file status information."""
+    if file_path.exists():
+        stat = file_path.stat()
+        size = stat.st_size
+        mtime = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"   ✅ {description:<15}: {file_path} ({size:,} bytes, {mtime})")
+    else:
+        print(f"   ❌ {description:<15}: {file_path} (missing)")
