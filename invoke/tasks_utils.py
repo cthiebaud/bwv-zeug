@@ -11,8 +11,11 @@ import hashlib
 import inspect
 import json
 import os
+import re
+from collections import defaultdict
 from datetime import datetime
 from invoke import task
+from pathlib import Path
 from pathlib import Path
 
 # =============================================================================
@@ -42,29 +45,29 @@ def detect_project_name():
             "Either run from a git repo or provide explicit file arguments."
         )
 
-def get_shared_ly_sources():
-    """Auto-detect LilyPond dependencies by parsing \\include statements."""
-    project_name = detect_project_name()
+
+def get_shared_ly_sources_tree(project_name=None):
+    """Auto-detect LilyPond dependencies and return as tree structure."""
+    if project_name is None:
+        project_name = detect_project_name()
+    
     main_file = Path(f"{project_name}.ly")
     
     if not main_file.exists():
-        return []
+        return {}
     
-    dependencies = set()
-    to_process = [main_file]
+    # Build dependency tree
+    tree = defaultdict(list)
     processed = set()
     
-    while to_process:
-        current_file = to_process.pop()
-        if current_file in processed:
-            continue
-        processed.add(current_file)
+    def process_file(file_path, parent=None):
+        """Recursively process a file and its includes."""
+        if file_path in processed:
+            return
+        processed.add(file_path)
         
         try:
-            content = current_file.read_text(encoding='utf-8')
-            
-            # Find \include "filename" statements
-            import re
+            content = file_path.read_text(encoding='utf-8')
             includes = re.findall(r'\\include\s+"([^"]+)"', content)
             
             for include_file in includes:
@@ -72,18 +75,43 @@ def get_shared_ly_sources():
                 
                 # Handle relative paths
                 if not include_path.is_absolute():
-                    include_path = current_file.parent / include_path
+                    include_path = file_path.parent / include_path
                 
                 if include_path.exists():
-                    dependencies.add(include_path)
+                    # Add to tree structure
+                    tree[file_path].append(include_path)
+                    
                     # Recursively process included files
                     if include_path.suffix in ['.ly', '.ily']:
-                        to_process.append(include_path)
+                        process_file(include_path, file_path)
                         
         except Exception as e:
-            print(f"⚠️  Warning: Could not parse {current_file}: {e}")
+            print(f"⚠️  Warning: Could not parse {file_path}: {e}")
     
-    return list(dependencies)
+    process_file(main_file)
+    return dict(tree)
+
+def flatten_tree(tree_dict):
+    """
+    Flatten a dependency tree into a list of unique Path objects.
+    
+    Args:
+        tree_dict: Dictionary representing tree structure {parent: [children]}
+        
+    Returns:
+        list: All unique Path objects from the tree
+    """
+    all_paths = set()
+    
+    # Add all parent files
+    all_paths.update(tree_dict.keys())
+    
+    # Add all child files
+    for children in tree_dict.values():
+        all_paths.update(children)
+    
+    return list(all_paths)    
+
 
 # ==============================================================================
 # ENHANCED PRINT FUNCTION WITH CONDITIONAL TIMESTAMPING
@@ -186,7 +214,7 @@ def remove_outputs(*filenames, force=True):
             path.unlink()
             deleted.append(path.name)
 
-    print("�️  Deleted:", end="")
+    print("�️ Deleted:", end="")
     if deleted:
         print()  # Add newline for multi-line format
         for d in deleted:
@@ -284,3 +312,54 @@ def print_file_status(file_path, description):
         print(f"   ✅ {description:<15}: {file_path} ({size:,} bytes, {mtime})")
     else:
         print(f"   ❌ {description:<15}: {file_path} (missing)")
+
+def print_build_status(files):
+    """
+    Print formatted build status for a list of files.
+    
+    Args:
+        files: List of (filename, display_name) tuples
+    """
+    # Get file info and sort by timestamp
+    file_infos = [get_file_info(filename, name) for filename, name in files]
+    file_infos.sort(key=lambda x: x[0])  # Sort by mtime
+    
+    print("📊 Build Status:")
+    for mtime, name, filename, size, exists in file_infos:
+        if exists:
+            mtime_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+            print(f"   ✅ {name:<18}: {filename:<75} ({size:>10,} bytes, {mtime_str})")
+        else:
+            print(f"   ❌ {name:<18}: {filename:<75} (missing)")
+
+def run_bwv_script(script_name, *args):
+    """
+    Run a BWV python script with correct path resolution and project context.
+    
+    Args:
+        script_name: Name of the script (e.g., 'no_hrefs_in_tabs.py')
+        *args: Arguments to pass to the script
+        
+    Returns:
+        CompletedProcess result
+    """
+    # Find the script relative to tasks_utils.py location
+    tasks_dir = Path(__file__).parent  # where tasks_utils.py is (invoke dir)
+    script_path = tasks_dir.parent / 'python' / script_name
+    
+    if not script_path.exists():
+        raise FileNotFoundError(f"BWV script not found: {script_path}")
+    
+    # Get project name from detect_project_name
+    project_name = detect_project_name()
+    
+    # Set up environment with PROJECT_NAME
+    env = os.environ.copy()
+    env['PROJECT_NAME'] = project_name
+    
+    cmd = ['python3', str(script_path)] + list(args)
+    print(f"🐍 Running: python3 {script_path.name} {' '.join(args)}")
+    print(f"🔧 PROJECT_NAME={project_name}")
+    
+    result = subprocess.run(cmd, env=env, check=True)
+    return result
