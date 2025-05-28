@@ -266,7 +266,7 @@ def smart_task(c, *, sources, targets, commands=None, python_func=None, force=Fa
     
     task_name = inspect.stack()[1].function
     print(f"")
-    print(f"[{task_name}]")
+    print(f"[{task_name}] ↓   ↓   ↓   ↓   ↓   ↓   ↓   ↓")
     
     if force or sources_changed(task_name, sources, cache_file):
         remove_outputs(*targets)
@@ -300,26 +300,14 @@ def smart_task(c, *, sources, targets, commands=None, python_func=None, force=Fa
             print("✅ Generated:")
             for t in targets:
                 print(f"   └── {t}")
-        else:
-            print(f"✅ Task {task_name} completed")
     else:
-        # Validate targets exist even when up-to-date
-        missing_targets = [t for t in targets if not Path(t).exists()]
-        if missing_targets:
-            print(f"⚠️  Cache inconsistency detected - targets missing:")
-            for target in missing_targets:
-                print(f"   • {target}")
-            print(f"🔄 Forcing rebuild due to missing targets...")
-            # Recursively call with force=True to rebuild
-            return smart_task(c, sources=sources, targets=targets, commands=commands, python_func=python_func, force=True, cache_file=cache_file)
-        
         if targets:
             print("✅ Up to date:")
             for t in targets:
                 print(f"   └── {t}")
-        else:
-            print(f"✅ Up to date: {task_name}")
-            
+
+    print(f"✅ Task {task_name} completed")
+        
 def print_file_status(file_path, description):
     """Print formatted file status information."""
     if file_path.exists():

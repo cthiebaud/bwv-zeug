@@ -464,6 +464,26 @@ def generate_tasks_file(listener):
         content.append(task_code)
         content.append("")  # add newline between tasks
 
+    # Generate the 'all' meta-task that runs all final exports
+    final_tasks = get_final_tasks_from_listener(listener)
+    
+    if final_tasks:
+        print(f"🎯 Adding 'all' task with dependencies: {', '.join(final_tasks)}")
+        
+        # Build the body that calls each task with force parameter using template
+        task_calls = '\n'.join(f"{task}(c, force=force)" for task in final_tasks)
+        body = f"""{task_calls}\nprint("🎉 All pipeline outputs completed!")"""
+        
+        all_task_code = TASK_TEMPLATE.format(
+            decorator="@task",
+            task_name="all",
+            task_description="Build all final outputs by running the complete pipeline",
+            body=textwrap.indent(body, '    ')
+        )
+        
+        content.append(all_task_code)
+        content.append("")
+
     return '\n'.join(content)
 
 # =============================================================================
@@ -734,6 +754,38 @@ def get_status_file_info(mermaid_file):
         status_files.append(('Export', export['description'], export['filename']))
     
     return status_files            
+
+
+def get_final_tasks_from_listener(listener):
+    """
+    Get list of task names that produce final exports from a parsed listener.
+    These are tasks that connect to runnables that produce export nodes.
+    """
+    final_tasks = []
+    
+    # Find all export nodes (E*)
+    export_nodes = [node['id'] for node in listener.nodes if node['type'] == 'E']
+    
+    # For each export, trace back to find the task that produces it
+    for export_id in export_nodes:
+        # Find runnable that produces this export (R -> E)
+        producing_runnable = None
+        for from_node, to_node in listener.edges:
+            if to_node == export_id and from_node.startswith('R'):
+                producing_runnable = from_node
+                break
+        
+        if producing_runnable:
+            # Find task that produces this runnable (T -> R)
+            for from_node, to_node in listener.edges:
+                if to_node == producing_runnable and from_node.startswith('T'):
+                    task_node = get_node_by_id(listener.nodes, from_node)
+                    if task_node:
+                        final_tasks.append(task_node['content'])
+                    break
+    
+    # Remove duplicates and return
+    return list(set(final_tasks))
 
 # =============================================================================
 # MAIN

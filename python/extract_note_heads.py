@@ -112,14 +112,14 @@ def main():
         project_name = get_project_name()
         svg_file = f"{project_name}_ly_one_line.svg"
         ly_file = f"{project_name}.ly"
-        output_csv = f"{project_name}_csv_svg_note_heads.csv"
+        output_csv = f"{project_name}_note_heads.csv"
         
     except ImportError:
         # Fallback for standalone use
         print("⚠️  _scripts_utils not available - using default file names")
         svg_file = "bwv1006_ly_one_line.svg"
         ly_file = "bwv1006.ly"
-        output_csv = "bwv1006_csv_svg_note_heads.csv"
+        output_csv = "bwv1006_note_heads.csv"
     
     print(f"🎼 Processing musical score:")
     print(f"   📄 SVG source: {svg_file}")

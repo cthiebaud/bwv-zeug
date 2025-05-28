@@ -34,17 +34,17 @@ def main():
         from _scripts_utils import get_project_name
         
         project_name = get_project_name()
-        midi_csv = f"{project_name}_csv_midi_note_events.csv" 
-        svg_csv = f"{project_name}_csv_svg_note_heads.csv"
+        midi_csv = f"{project_name}_note_events.csv" 
+        svg_csv = f"{project_name}_note_heads.csv"
         ties_csv = f"{project_name}_csv_ties.csv"
         output_json = f"exports/{project_name}_json_notes.json"
         
     except ImportError:
         # Fallback for standalone use
         print("⚠️  _scripts_utils not available - using default file names")
-        midi_csv = "bwv1006_csv_midi_note_events.csv"
-        svg_csv = "bwv1006_csv_svg_note_heads.csv" 
-        ties_csv = "bwv1006_csv_ties.csv"
+        midi_csv = "bwv1006_note_events.csv"
+        svg_csv = "bwv1006_note_heads.csv" 
+        ties_csv = "bwv1006_ties.csv"
         output_json = "exports/bwv1006_json_notes.json"
     
     # Load data files

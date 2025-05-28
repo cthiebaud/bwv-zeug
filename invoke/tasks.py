@@ -71,7 +71,6 @@ def clean(c):
     """Delete all generated output files."""
     print(f"🎼 Detected project: {PROJECT_NAME}")
     
-    # Get target files from mermaid diagram
     # Get target files from mermaid diagram  
     mermaid_path = Path(__file__).parent / 'tasks.mmd'
     target_templates = get_all_target_files(str(mermaid_path))
@@ -117,61 +116,48 @@ def info(c):
     print(f"📄 Pipeline: tasks.mmd")
     print(f"🤖 Generated: tasks_generated.py")
     print(f"📋 Available tasks:")
-    print("   📊 status  - Show file status")
-    print("   🗑️ clean   - Delete outputs") 
-    print("   ℹ️  info    - This information")
+    print("   • status  - Show file status")
+    print("   • clean   - Delete outputs") 
+    print("   • info    - This information")
     print("   🔧 Pipeline tasks from tasks.mmd:")
     
-    # Show generated tasks
-    from tasks_mermaid_utils import get_nodes_by_type, get_all_file_nodes
-    file_info = get_all_file_nodes('tasks.mmd')
+    # Get task names from mermaid file
+    from tasks_mermaid_utils import get_all_file_nodes, parse_and_display_mermaid
+    from pathlib import Path
+    from antlr4 import InputStream, CommonTokenStream, ParseTreeWalker
+    from MermaidPipelineLexer import MermaidPipelineLexer
+    from MermaidPipelineParser import MermaidPipelineParser
+    from tasks_mermaid_utils import MermaidDisplayListener, get_nodes_by_type
     
-    # This is a bit hacky - we'd need to parse the mermaid again to get task names
-    # For now, just show a few key ones
-    key_tasks = ['build_pdf', 'build_svg', 'extract_noteheads', 'align_data']
-    for task_name in key_tasks:
-        print(f"      • {task_name}")
-
-
-@task
-def regenerate_tasks(c):
-    """Regenerate tasks_generated.py from tasks.mmd."""
-    print("🔄 Regenerating tasks from tasks.mmd...")
-    c.run("python tasks_mermaid_utils.py tasks.mmd --generate-tasks")
-    print("✅ Regenerated tasks_generated.py")
-    print("   Restart invoke or reimport to use updated tasks")
-
-@task
-def all(c, force=False):
-    """Build all final outputs by running the complete pipeline."""
-    print(f"🚀 Building all outputs for {PROJECT_NAME}")
-    
-    # Get final tasks from mermaid diagram
-    mermaid_path = Path(__file__).parent / 'tasks.mmd'
-    final_task_names = get_final_tasks(str(mermaid_path))
-    
-    if not final_task_names:
-        print("❌ Could not determine final tasks from pipeline")
-        return
-    
-    print(f"📋 Running final tasks: {', '.join(final_task_names)}")
-    
-    # Import the task functions dynamically
-    import tasks_generated
-    
-    for task_name in final_task_names:
-        print(f"\n🔄 Running {task_name}...")
-        try:
-            # Get the function from the module
-            task_func = getattr(tasks_generated, task_name)
-            task_func(c, force=force)
-            print(f"✅ {task_name} completed")
-        except AttributeError:
-            print(f"❌ Task function {task_name} not found in tasks_generated")
-            return
-        except Exception as e:
-            print(f"❌ {task_name} failed: {e}")
-            return
-    
-    print("\n🎉 All pipeline outputs built successfully!")
-    print("📊 Run 'invoke status' to see results")
+    try:
+        mermaid_path = Path(__file__).parent / 'tasks.mmd'
+        if mermaid_path.exists():
+            content = mermaid_path.read_text()
+            input_stream = InputStream(content)
+            lexer = MermaidPipelineLexer(input_stream)
+            lexer.removeErrorListeners()
+            
+            stream = CommonTokenStream(lexer)
+            parser = MermaidPipelineParser(stream)
+            parser.removeErrorListeners()
+            
+            tree = parser.diagram()
+            
+            listener = MermaidDisplayListener()
+            walker = ParseTreeWalker()
+            walker.walk(listener, tree)
+            
+            # Get all task nodes and display them
+            task_nodes = get_nodes_by_type(listener.nodes, 'T')
+            for task_node in task_nodes:
+                task_name = task_node['content']
+                description = task_node.get('description', '').strip()
+                if description:
+                    print(f"      • {task_name} - {description}")
+                else:
+                    print(f"      • {task_name}")
+        else:
+            print("      • tasks.mmd not found")
+            
+    except Exception as e:
+        print(f"      • Error reading tasks from mermaid: {e}")

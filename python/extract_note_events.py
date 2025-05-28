@@ -185,14 +185,14 @@ def main():
         midi_file_path, output_file_path = get_io_files(
             "Extract MIDI note events and synchronize with audio timeline",
             "{project}_ly_one_line.midi",
-            "{project}_csv_midi_note_events.csv"
+            "{project}_note_events.csv"
         )
         
     except ImportError:
         # Fallback for standalone use
         print("⚠️  _scripts_utils not available - using default file names")
         midi_file_path = "bwv1006_ly_one_line.midi"
-        output_file_path = "bwv1006_csv_midi_note_events.csv"
+        output_file_path = "bwv1006_note_events.csv"
     
     # Process MIDI file
     try:
