@@ -245,7 +245,7 @@ def get_file_info(filename, name):
 # SMART TASK RUNNER
 # ==============================================================================
 
-def smart_task(c, *, sources, targets, commands, force=False, cache_file=".build_cache.json"):
+def smart_task(c, *, sources, targets, commands=None, python_func=None, force=False, cache_file=".build_cache.json"):
     """
     Unified smart task runner with caching and progress reporting.
     
@@ -253,23 +253,40 @@ def smart_task(c, *, sources, targets, commands, force=False, cache_file=".build
         c: Invoke context
         sources: List of source file paths
         targets: List of target file paths/names
-        commands: List of shell commands to run
+        commands: List of shell commands to run (optional if python_func provided)
+        python_func: Python function to execute (optional if commands provided)
         force: If True, force rebuild regardless of cache
         cache_file: Path to cache file
     """
+    # Validate that exactly one of commands or python_func is provided
+    if commands and python_func:
+        raise ValueError("Cannot specify both 'commands' and 'python_func'")
+    if not commands and not python_func:
+        raise ValueError("Must specify either 'commands' or 'python_func'")
+    
     task_name = inspect.stack()[1].function
     print(f"")
     print(f"[{task_name}]")
     
     if force or sources_changed(task_name, sources, cache_file):
         remove_outputs(*targets)
-        print(f"� Rebuilding {task_name}...")
+        print(f"🔄 Rebuilding {task_name}...")
         
-        for cmd in commands:
-            # Run subprocess commands with unbuffered output for better logging
-            if cmd.startswith('python3 '):
-                cmd = cmd.replace('python3 ', 'python3 -u ')
-            c.run(cmd)
+        if commands:
+            # Execute shell commands
+            for cmd in commands:
+                # Run subprocess commands with unbuffered output for better logging
+                if cmd.startswith('python3 '):
+                    cmd = cmd.replace('python3 ', 'python3 -u ')
+                c.run(cmd)
+        
+        elif python_func:
+            # Execute Python function
+            try:
+                python_func()
+            except Exception as e:
+                print(f"❌ Python function failed: {e}")
+                raise RuntimeError(f"Task {task_name} failed during Python function execution: {e}")
         
         # Validate that all targets were actually created
         missing_targets = [t for t in targets if not Path(t).exists()]
@@ -292,9 +309,9 @@ def smart_task(c, *, sources, targets, commands, force=False, cache_file=".build
             print(f"⚠️  Cache inconsistency detected - targets missing:")
             for target in missing_targets:
                 print(f"   • {target}")
-            print(f"� Forcing rebuild due to missing targets...")
+            print(f"🔄 Forcing rebuild due to missing targets...")
             # Recursively call with force=True to rebuild
-            return smart_task(c, sources=sources, targets=targets, commands=commands, force=True, cache_file=cache_file)
+            return smart_task(c, sources=sources, targets=targets, commands=commands, python_func=python_func, force=True, cache_file=cache_file)
         
         if targets:
             print("✅ Up to date:")
@@ -302,7 +319,7 @@ def smart_task(c, *, sources, targets, commands, force=False, cache_file=".build
                 print(f"   └── {t}")
         else:
             print(f"✅ Up to date: {task_name}")
-
+            
 def print_file_status(file_path, description):
     """Print formatted file status information."""
     if file_path.exists():

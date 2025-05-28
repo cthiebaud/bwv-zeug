@@ -1,42 +1,13 @@
 #!/usr/bin/env python3
 """
 Minimal Mermaid Utils - Parse .mmd files and generate Invoke tasks
-
-Version: 3.7.0 - Fixed list concatenation syntax for sources
-
-Usage:
-  python tasks_mermaid_utils.py tasks.mmd
-  python tasks_mermaid_utils.py tasks.mmd --generate-tasks
-
-Requirements: 
-  pip install antlr4-python3-runtime
-  Generate ANTLR classes: source build_antlr.sh
-
-Changes in v3.3.0:
-  - Fixed sources list concatenation: [Path("file.ly")] + shared_ly_sources()
-  - Improved sources generation logic for proper Python syntax
-
-Changes in v3.2.0:
-  - Fixed all f-string interpolations to properly use {PROJECT_NAME}
-  - Ensured consistent variable interpolation in generated commands and targets
-
-Changes in v3.1.0:
-  - Added project name caching at module level for better performance
-  - Fixed f-string generation for targets and commands
-  - Only call detect_project_name() once when module loads
-
-Changes in v3.0.0:
-  - Implemented separate lexer/parser grammars with lexer modes
-  - Fixed Docker command parsing with preserved spaces
-  - Enhanced content extraction with multiple fallback methods
-  - Maintains all original functionality from v2.9.0
 """
 
-VERSION = "3.7.0"
+VERSION = "3.8.0"
 
+import textwrap
 import sys
 from pathlib import Path
-import antlr4
 from antlr4 import *
 
 # Import generated ANTLR classes
@@ -261,22 +232,38 @@ def get_task_sources(task_id, edges, nodes):
    Determine source files for a task based on input dependencies.
    Returns the complete sources expression as a string for direct use in code generation.
    """
+   print(f"🔍 DEBUG get_task_sources for {task_id}")
    path_sources = []
    
    # Find inputs that flow to this task
    for from_node, to_node in edges:
-       if to_node == task_id and from_node.startswith('I'):
-           input_node = get_node_by_id(nodes, from_node)
-           if input_node:
-               # Extract filename from content and fix BWV000 placeholder
-               filename = input_node['content']
-               if 'BWV000' in filename:
-                   # Generate f-string version for runtime interpolation
-                   filename = filename.replace('BWV000', '{PROJECT_NAME}')
-                   path_sources.append(f'Path(f"{filename}")')
-               else:
-                   # Regular filename
-                   path_sources.append(f'Path("{filename}")')
+       if to_node == task_id:
+           print(f"   Found edge: {from_node} -> {to_node}")
+           if from_node.startswith('I'):
+               print(f"   Processing Input: {from_node}")
+               # Direct input files (I -> T)
+               input_node = get_node_by_id(nodes, from_node)
+               if input_node:
+                   filename = input_node['content']
+                   if 'BWV000' in filename:
+                       filename = filename.replace('BWV000', '{PROJECT_NAME}')
+                       path_sources.append(f'Path(f"{filename}")')
+                   else:
+                       path_sources.append(f'Path("{filename}")')
+           elif from_node.startswith('O'):
+               print(f"   Processing Output: {from_node}")
+               # Output files from previous tasks (O -> T)
+               output_node = get_node_by_id(nodes, from_node)
+               if output_node:
+                   filename = output_node['content']
+                   if 'BWV000' in filename:
+                       filename = filename.replace('BWV000', '{PROJECT_NAME}')
+                       path_sources.append(f'Path(f"{filename}")')
+                   else:
+                       path_sources.append(f'Path("{filename}")')
+                       
+   print(f"   Final path_sources: {path_sources}")
+   # Rest stays the same...
    
    # Check if we have .ly files to determine if we need shared sources
    has_ly_files = any('.ly' in src for src in path_sources)
@@ -295,7 +282,7 @@ def get_task_sources(task_id, edges, nodes):
    
 def get_task_targets(task_id, edges, nodes):
     """
-    Determine target files for a task based on runnable->output dependencies.
+    Determine target files for a task based on runnable->output/export dependencies.
     """
     targets = []
     
@@ -306,14 +293,14 @@ def get_task_targets(task_id, edges, nodes):
             runnable_id = to_node
             break
     
-    # Find outputs that this runnable produces (R -> O)
+    # Find outputs/exports that this runnable produces (R -> O or R -> E)
     if runnable_id:
         for from_node, to_node in edges:
-            if from_node == runnable_id and to_node.startswith('O'):
-                output_node = get_node_by_id(nodes, to_node)
-                if output_node:
+            if from_node == runnable_id and (to_node.startswith('O') or to_node.startswith('E')):
+                target_node = get_node_by_id(nodes, to_node)
+                if target_node:
                     # Extract filename from content and fix BWV000 placeholder
-                    filename = output_node['content']
+                    filename = target_node['content']
                     filename = filename.replace('BWV000', '{PROJECT_NAME}')
                     targets.append(f'f"{filename}"')
     
@@ -382,107 +369,101 @@ def debug_task_mapping(task_id, edges, nodes):
     
     return runnable
 
+
 def generate_tasks_file(listener):
-    """Generate the tasks_generated.py file."""
+    """Generate the tasks_generated.py file using a templating approach."""
     
+    # Template for each task function
+    TASK_TEMPLATE = textwrap.dedent("""\
+        {decorator}
+        def {task_name}(c, force=False):
+            \"\"\"{task_description}.\"\"\"
+        {body}
+    """)
+
+    HEADER = textwrap.dedent("""\
+        #!/usr/bin/env python3
+        \"\"\"
+        Generated Invoke Tasks - Auto-generated from tasks.mmd
+
+        DO NOT EDIT MANUALLY - This file is auto-generated
+        Regenerate with: python tasks_mermaid_utils.py tasks.mmd --generate-tasks
+        \"\"\"
+
+        from invoke import task
+        from pathlib import Path
+        from tasks_utils import smart_task, detect_project_name, flatten_tree, get_shared_ly_sources_tree, run_bwv_script
+
+        # Cache project name at module level - detected only once
+        PROJECT_NAME = detect_project_name()
+
+
+        def shared_ly_sources():
+            \"\"\"Get shared LilyPond source dependencies.\"\"\"
+            return [Path(p) for p in flatten_tree(get_shared_ly_sources_tree(PROJECT_NAME))]
+
+
+    """)
+
+    # Start with the header
+    content = [HEADER]
+
     # Get all task nodes
     task_nodes = get_nodes_by_type(listener.nodes, 'T')
-    
-    # Debug: Print what we found
-    print(f"🔍 Found {len(task_nodes)} task nodes:")
-    for task in task_nodes:
-        print(f"   {task['id']}: {task['content']}")
-    
-    print(f"🔍 Found {len(listener.edges)} edges")
-    
-    # Start building the file content
-    content = []
-    content.append('#!/usr/bin/env python3')
-    content.append('"""')
-    content.append('Generated Invoke Tasks - Auto-generated from tasks.mmd')
-    content.append('')
-    content.append('DO NOT EDIT MANUALLY - This file is auto-generated')
-    content.append('Regenerate with: python tasks_mermaid_utils.py tasks.mmd --generate-tasks')
-    content.append('"""')
-    content.append('')
-    content.append('from invoke import task')
-    content.append('from pathlib import Path')
-    content.append('from tasks_utils import smart_task, detect_project_name, flatten_tree, get_shared_ly_sources_tree, run_bwv_script')
-    content.append('')
-    content.append('# Cache project name at module level - detected only once')
-    content.append('PROJECT_NAME = detect_project_name()')
-    content.append('')
-    content.append('')
-    content.append('def shared_ly_sources():')
-    content.append('    """Get shared LilyPond source dependencies."""')
-    content.append('    return [Path(p) for p in flatten_tree(get_shared_ly_sources_tree(PROJECT_NAME))]')
-    content.append('')
-    content.append('')
-    
-    # Generate each task
+    print(f"🔍 Found {len(task_nodes)} task nodes")
+
     for task_node in task_nodes:
         task_id = task_node['id']
         task_name = task_node['content']
         task_description = task_node.get('description', task_name.replace('_', ' ').title())
-        
-        # Debug this specific task
+
         debug_task_mapping(task_id, listener.edges, listener.nodes)
-        
-        # Get task dependencies
+
         dependencies = trace_task_dependencies(task_id, listener.edges, listener.nodes)
-        print(f"   Dependencies: {dependencies}")
-        
-        # Get sources, targets, and commands
         sources = get_task_sources(task_id, listener.edges, listener.nodes)
         targets = get_task_targets(task_id, listener.edges, listener.nodes)
         command = get_task_command(task_id, listener.edges, listener.nodes)
-        
-        print(f"   Sources: {sources}")
-        print(f"   Targets: {targets}")
-        print(f"   Command: {command}")
-        
-        # Generate task decorator
-        if dependencies:
-            dep_names = ', '.join(dependencies)
-            content.append(f'@task(pre=[{dep_names}])')
-        else:
-            content.append('@task')
-        
-        # Generate task function
-        content.append(f'def {task_name}(c, force=False):')
-        content.append(f'    """{task_description}."""')
-        content.append('    ')
-        
-        # Handle commands
+
+        decorator = f"@task(pre=[{', '.join(dependencies)}])" if dependencies else "@task"
+
         if command:
+            targets_str = ', '.join(targets) if targets else ''
+            
             if command.startswith('run_bwv_script'):
-                # Python script command
-                content.append('    # Run BWV Python script')
-                content.append(f'    {command}')
+                # Python script
+                commands_param = None
+                python_func_param = f"lambda: {command}"
             else:
-                # Docker or other shell command
-                content.append('    smart_task(')
-                content.append('        c,')
-                content.append(f'        sources={sources},')
-                
-                if targets:
-                    targets_str = ', '.join(targets)
-                    content.append(f'        targets=[{targets_str}],')
-                else:
-                    content.append('        targets=[],')
-                
-                content.append('        commands=[')
-                content.append(f'            {command}')
-                content.append('        ],')
-                content.append('        force=force,')
-                content.append('    )')
+                # Docker/shell command  
+                commands_param = f"[{command}]"
+                python_func_param = None
+            
+            body = textwrap.dedent(f"""\
+                smart_task(
+                    c,
+                    sources={sources},
+                    targets=[{targets_str}],
+                    commands={commands_param},
+                    python_func={python_func_param},
+                    force=force,
+                )
+            """)
         else:
-            content.append('    # TODO: Add implementation - no command found')
-            content.append('    pass')
-        
-        content.append('')
-        content.append('')
-    
+            body = "# TODO: Add implementation - no command found\npass"
+
+        # Indent body to match function block
+        indented_body = textwrap.indent(body, '    ')
+
+        task_code = TASK_TEMPLATE.format(
+            decorator=decorator,
+            task_name=task_name,
+            task_description=task_description,
+            body=indented_body
+        )
+
+        content.append(task_code)
+        content.append("")  # add newline between tasks
+
     return '\n'.join(content)
 
 # =============================================================================
@@ -565,6 +546,18 @@ def display_full_parsed_content(listener):
                 print(f"   {node['id']}: {node['content']}")
                 if node['description']:
                     print(f"      └─ {node['description']}")
+                
+                # Add input/output info for Tasks and Runnables
+                if node_type in ['T', 'R']:
+                    # Show inputs (what flows into this node)
+                    inputs = [from_node for from_node, to_node in listener.edges if to_node == node['id']]
+                    if inputs:
+                        print(f"      📥 Inputs: {', '.join(inputs)}")
+                    
+                    # Show outputs (what flows out of this node)  
+                    outputs = [to_node for from_node, to_node in listener.edges if from_node == node['id']]
+                    if outputs:
+                        print(f"      📤 Outputs: {', '.join(outputs)}")
     
     # Edges
     if listener.edges:
@@ -594,6 +587,153 @@ def display_full_parsed_content(listener):
         count = len([n for n in listener.nodes if n['type'] == node_type])
         if count > 0:
             print(f"   {type_name}: {count}")
+
+# =============================================================================
+# MERMAID FILE ANALYSIS HELPERS
+# =============================================================================
+
+def get_all_file_nodes(mermaid_file):
+    """
+    Parse mermaid file and return all file-related nodes (I, O, E).
+    Returns dict with categorized file information.
+    """
+    mermaid_path = Path(mermaid_file)
+    if not mermaid_path.exists():
+        return {}
+    
+    try:
+        content = mermaid_path.read_text()
+        input_stream = InputStream(content)
+        lexer = MermaidPipelineLexer(input_stream)
+        lexer.removeErrorListeners()
+        
+        stream = CommonTokenStream(lexer)
+        parser = MermaidPipelineParser(stream)
+        parser.removeErrorListeners()
+        
+        tree = parser.diagram()
+        
+        listener = MermaidDisplayListener()
+        walker = ParseTreeWalker()
+        walker.walk(listener, tree)
+        
+        # Categorize file nodes
+        file_info = {
+            'inputs': [],
+            'outputs': [], 
+            'exports': []
+        }
+        
+        for node in listener.nodes:
+            filename = node['content'].replace('BWV000', '{PROJECT_NAME}')
+            file_data = {
+                'id': node['id'],
+                'filename': filename,
+                'description': node.get('description', ''),
+                'category': node['type']
+            }
+            
+            if node['type'] == 'I':
+                file_info['inputs'].append(file_data)
+            elif node['type'] == 'O':
+                file_info['outputs'].append(file_data)
+            elif node['type'] == 'E':
+                file_info['exports'].append(file_data)
+        
+        return file_info
+        
+    except Exception as e:
+        print(f"❌ Error parsing mermaid file: {e}")
+        return {}
+
+def get_all_target_files(mermaid_file):
+    """
+    Get list of all target files (outputs + exports) that can be cleaned.
+    Returns list of filename strings with PROJECT_NAME placeholder.
+    """
+    file_info = get_all_file_nodes(mermaid_file)
+    targets = []
+    
+    for output in file_info['outputs']:
+        targets.append(output['filename'])
+    
+    for export in file_info['exports']:
+        targets.append(export['filename'])
+    
+    return targets
+
+def get_final_tasks(mermaid_file):
+    """
+    Get list of task names that produce final exports.
+    These are tasks that connect to runnables that produce export nodes.
+    """
+    mermaid_path = Path(mermaid_file)
+    if not mermaid_path.exists():
+        return []
+    
+    try:
+        content = mermaid_path.read_text()
+        input_stream = InputStream(content)
+        lexer = MermaidPipelineLexer(input_stream)
+        lexer.removeErrorListeners()
+        
+        stream = CommonTokenStream(lexer)
+        parser = MermaidPipelineParser(stream)
+        parser.removeErrorListeners()
+        
+        tree = parser.diagram()
+        
+        listener = MermaidDisplayListener()
+        walker = ParseTreeWalker()
+        walker.walk(listener, tree)
+        
+        final_tasks = []
+        
+        # Find all export nodes (E*)
+        export_nodes = [node['id'] for node in listener.nodes if node['type'] == 'E']
+        
+        # For each export, trace back to find the task that produces it
+        for export_id in export_nodes:
+            # Find runnable that produces this export (R -> E)
+            producing_runnable = None
+            for from_node, to_node in listener.edges:
+                if to_node == export_id and from_node.startswith('R'):
+                    producing_runnable = from_node
+                    break
+            
+            if producing_runnable:
+                # Find task that produces this runnable (T -> R)
+                for from_node, to_node in listener.edges:
+                    if to_node == producing_runnable and from_node.startswith('T'):
+                        task_node = get_node_by_id(listener.nodes, from_node)
+                        if task_node:
+                            final_tasks.append(task_node['content'])
+                        break
+        
+        # Remove duplicates and return
+        return list(set(final_tasks))
+        
+    except Exception as e:
+        print(f"❌ Error parsing mermaid file for final tasks: {e}")
+        return []
+    
+def get_status_file_info(mermaid_file):
+    """
+    Get structured file information for status display.
+    Returns list of (category, description, filename) tuples.
+    """
+    file_info = get_all_file_nodes(mermaid_file)
+    status_files = []
+    
+    # Add outputs
+    for output in file_info['outputs']:
+        status_files.append(('Output', output['description'], output['filename']))
+    
+    # Add exports  
+    for export in file_info['exports']:
+        status_files.append(('Export', export['description'], export['filename']))
+    
+    return status_files            
 
 # =============================================================================
 # MAIN

@@ -277,8 +277,8 @@ def main():
         
         input_file, output_file = get_io_files(
             "Prepare SVG for animation by restructuring DOM hierarchy",
-            "{project}_svg_no_hrefs_in_tabs.svg",
-            "{project}_svg_no_hrefs_in_tabs_swellable.svg"
+            "{project}_no_hrefs_in_tabs.svg",
+            "{project}_no_hrefs_in_tabs_swellable.svg"
         )
         
     except ImportError as e:

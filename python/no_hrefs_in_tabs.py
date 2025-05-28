@@ -214,7 +214,7 @@ def main():
         input_file, output_file = get_io_files(
             "Remove hyperlinks from text and rect elements in SVG",
             "{project}.svg",
-            "{project}_svg_no_hrefs_in_tabs.svg"
+            "{project}_no_hrefs_in_tabs.svg"
         )
         
     except ImportError as e:

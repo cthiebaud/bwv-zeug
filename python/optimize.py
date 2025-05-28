@@ -83,8 +83,8 @@ def main():
         
         input_file, output_file = get_io_files(
             "Optimize SVG files using SVGO",
-            "{project}_svg_no_hrefs_in_tabs_swellable.svg",
-            "exports/{project}_svg_no_hrefs_in_tabs_swellable_optimized.svg"
+            "{project}_no_hrefs_in_tabs_swellable.svg",
+            "exports/{project}_optimized.svg"
         )
         
     except ImportError:

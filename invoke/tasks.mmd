@@ -25,7 +25,7 @@ T9[align_data]
 %% ============================================================================
 %% RUNNABLE NODES
 %% ============================================================================
-R1[docker run -v PWD:/work codello/lilypond:dev BWV000.ly<br/>🐳 LilyPond PDF]
+R1[docker run -v PWD:/work codello/lilypond:dev BWV000.ly && mkdir -p exports && mv BWV000.pdf exports<br/>🐳 LilyPond PDF]
 R2[docker run -v PWD:/work codello/lilypond:dev --svg BWV000.ly<br/>🐳 LilyPond SVG]
 R3[docker run -v PWD:/work codello/lilypond:dev --svg BWV000_ly_one_line.ly<br/>🐳 LilyPond One-line SVG and MIDI]
 R4[bwv_script:no_hrefs_in_tabs.py BWV000.svg<br/>🔗 Remove tab links]
@@ -49,7 +49,7 @@ O8[BWV000_note_events.csv<br/>📊 MIDI Events Data]
 %% ============================================================================
 %% EXPORT NODES
 %% ============================================================================
-E3[BWV000.pdf<br/>📑 PDF Output]
+E3[exports/BWV000.pdf<br/>📑 PDF Output]
 E1[exports/BWV000_optimized.svg<br/>🎨 Final Animated SVG]
 E2[exports/BWV000_json_notes.json<br/>🎵 Synchronized Animation Data]
 
@@ -78,7 +78,6 @@ T8 --> R8
 T9 --> R9
 
 %% Runnable to output relationships
-R1 --> E3
 R2 --> O2
 R3 --> O3
 R3 --> O4
@@ -89,7 +88,6 @@ R4 --> O5
 O5 --> T5
 R5 --> O6
 O6 --> T6
-R6 --> E1
 
 %% Data extraction parallel branches
 O3 --> T7
@@ -102,6 +100,8 @@ O7 --> T9
 O8 --> T9
 
 %% Final export
+R1 --> E3
+R6 --> E1
 R9 --> E2
 
 %% ============================================================================
