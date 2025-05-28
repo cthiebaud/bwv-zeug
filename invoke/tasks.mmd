@@ -1,66 +1,130 @@
 %%{init: {'theme':'neutral'}}%%
 graph TD
-    %% Input Sources
-    I1[BWV000.ly<br/>📄 Main Score] --> T1[build_pdf]
-    I1 --> T2[build_svg]
-    
-    I2[BWV000_ly_one_line.ly<br/>📄 One-line Score] --> T3[build_svg_one_line]
-    
-    I3[BWV000_ly_main.ly<br/>📄 Shared Dependencies] --> I1
-    I3 --> I2
 
-    I4[BWV000_ties.csv<br/>📄 Tied Notes Tuples] --> T9
-    
-    %% PDF Generation
-    T1 --> R1[docker run -v PWD:/work codello/lilypond:dev BWV000.ly<br/>🐳 LilyPond PDF]
-    R1 --> O1[BWV000.pdf<br/>📑 PDF Output]
-    
-    %% SVG Generation Chain
-    T2 --> R2[docker run -v PWD:/work codello/lilypond:dev --svg BWV000.ly<br/>🐳 LilyPond SVG]
-    R2 --> O2[BWV000.svg<br/>🎼 Main SVG Score]
-    O2 --> T4[post_process]
-    
-    %% One-line SVG and MIDI Generation
-    T3 --> R3[docker run -v PWD:/work codello/lilypond:dev --svg BWV000_ly_one_line.ly<br/>🐳 LilyPond One-line]
-    R3 --> O3[BWV000_ly_one_line.svg<br/>🎼 One-line SVG]
-    R3 --> O4[BWV000_ly_one_line.midi<br/>🎵 MIDI Data]
-    
-    %% SVG Post-processing Pipeline
-    T4 --> R4[bwv_script:no_hrefs_in_tabs.py BWV000.svg<br/>🔗 Remove tab links]
-    R4 --> O5[BWV000_no_hrefs_in_tabs.svg]
-    
-    O5 --> T5[prepare_swell]
-    T5 --> R5[bwv_script:ensure_swellable.py BWV000_no_hrefs_in_tabs.svg<br/>🎯 Animation prep]
-    R5 --> O6[BWV000_no_hrefs_in_tabs_swellable.svg]
-    
-    O6 --> T6[optimize_svg]
-    T6 --> R6[bwv_script:optimize.py BWV000_no_hrefs_in_tabs_swellable.svg<br/>⚡ SVGO optimization]
-    R6 --> E1[exports/BWV000_optimized.svg<br/>🎨 Final Animated SVG]
-    
-    %% Parallel Data Extraction
-    O3 --> T7[extract_noteheads]
-    T7 --> R7[bwv_script:extract_note_heads.py BWV000_ly_one_line.svg<br/>📍 Extract notehead positions]
-    R7 --> O7[BWV000_note_heads.csv<br/>📊 SVG Noteheads Data]
-    
-    O4 --> T8[extract_midi_timing]
-    T8 --> R8[bwv_script:extract_note_events.py BWV000_ly_one_line.midi<br/>⏱️ Extract MIDI timing]
-    R8 --> O8[BWV000_note_events.csv<br/>📊 MIDI Events Data]
-    
-    %% Data Alignment (requires both CSV files)
-    O7 --> T9[align_data]
-    O8 --> T9
-    T9 --> R9[bwv_script:align_data.py BWV000_note_heads.csv BWV000_note_events.csv<br/>🎯 Align MIDI↔SVG]
-    R9 --> E2[exports/BWV000_json_notes.json<br/>🎵 Synchronized Animation Data]
-    
-    %% Styling
-    classDef input fill:#e1f5fe,stroke:#01579b,stroke-width:2px
-    classDef task fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
-    classDef output fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
-    classDef runnable fill:#fff3e0,stroke:#e65100,stroke-width:2px
-    classDef export fill:#ffebee,stroke:#b71c1c,stroke-width:3px
-    
-    class I1,I2,I3,I4 input
-    class T1,T2,T3,T4,T5,T6,T7,T8,T9 task
-    class O1,O2,O3,O4,O5,O6,O7,O8 output
-    class R1,R2,R3,R4,R5,R6,R7,R8,R9 runnable
-    class E1,E2 export
+%% ============================================================================
+%% INPUT NODES
+%% ============================================================================
+I1[BWV000.ly<br/>📄 Main Score]
+I2[BWV000_ly_one_line.ly<br/>📄 One-line Score]
+I3[BWV000_ly_main.ly<br/>📄 Shared Dependencies]
+I4[BWV000_ties.csv<br/>📄 Tied Notes Tuples]
+
+%% ============================================================================
+%% TASK NODES
+%% ============================================================================
+T1[build_pdf]
+T2[build_svg]
+T3[build_svg_one_line]
+T4[post_process]
+T5[prepare_swell]
+T6[optimize_svg]
+T7[extract_noteheads]
+T8[extract_midi_timing]
+T9[align_data]
+
+%% ============================================================================
+%% RUNNABLE NODES
+%% ============================================================================
+R1[docker run -v PWD:/work codello/lilypond:dev BWV000.ly<br/>🐳 LilyPond PDF]
+R2[docker run -v PWD:/work codello/lilypond:dev --svg BWV000.ly<br/>🐳 LilyPond SVG]
+R3[docker run -v PWD:/work codello/lilypond:dev --svg BWV000_ly_one_line.ly<br/>🐳 LilyPond One-line SVG and MIDI]
+R4[bwv_script:no_hrefs_in_tabs.py BWV000.svg<br/>🔗 Remove tab links]
+R5[bwv_script:ensure_swellable.py BWV000_no_hrefs_in_tabs.svg<br/>🎯 Animation prep]
+R6[bwv_script:optimize.py BWV000_no_hrefs_in_tabs_swellable.svg<br/>⚡ SVGO optimization]
+R7[bwv_script:extract_note_heads.py BWV000_ly_one_line.svg<br/>📍 Extract notehead positions]
+R8[bwv_script:extract_note_events.py BWV000_ly_one_line.midi<br/>⏱️ Extract MIDI timing]
+R9[bwv_script:align_data.py BWV000_note_heads.csv BWV000_note_events.csv BWV000_ties.csv<br/>🎯 Align MIDI↔SVG]
+
+%% ============================================================================
+%% OUTPUT NODES
+%% ============================================================================
+O2[BWV000.svg<br/>🎼 Main SVG Score]
+O3[BWV000_ly_one_line.svg<br/>🎼 One-line SVG]
+O4[BWV000_ly_one_line.midi<br/>🎵 MIDI Data]
+O5[BWV000_no_hrefs_in_tabs.svg<br/>🔄 Processed SVG]
+O6[BWV000_no_hrefs_in_tabs_swellable.svg<br/>🎯 Animation-ready SVG]
+O7[BWV000_note_heads.csv<br/>📊 SVG Noteheads Data]
+O8[BWV000_note_events.csv<br/>📊 MIDI Events Data]
+
+%% ============================================================================
+%% EXPORT NODES
+%% ============================================================================
+E3[BWV000.pdf<br/>📑 PDF Output]
+E1[exports/BWV000_optimized.svg<br/>🎨 Final Animated SVG]
+E2[exports/BWV000_json_notes.json<br/>🎵 Synchronized Animation Data]
+
+%% ============================================================================
+%% DEPENDENCY RELATIONSHIPS
+%% ============================================================================
+%% Shared dependencies
+I3 --> I1
+I3 --> I2
+
+%% Input to task relationships
+I1 --> T1
+I1 --> T2
+I2 --> T3
+I4 --> T9
+
+%% Task to runnable relationships
+T1 --> R1
+T2 --> R2
+T3 --> R3
+T4 --> R4
+T5 --> R5
+T6 --> R6
+T7 --> R7
+T8 --> R8
+T9 --> R9
+
+%% Runnable to output relationships
+R1 --> E3
+R2 --> O2
+R3 --> O3
+R3 --> O4
+
+%% SVG processing chain
+O2 --> T4
+R4 --> O5
+O5 --> T5
+R5 --> O6
+O6 --> T6
+R6 --> E1
+
+%% Data extraction parallel branches
+O3 --> T7
+R7 --> O7
+O4 --> T8
+R8 --> O8
+
+%% Final data alignment
+O7 --> T9
+O8 --> T9
+
+%% Final export
+R9 --> E2
+
+%% ============================================================================
+%% STYLING
+%% ============================================================================
+classDef input fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+classDef task fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+classDef output fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+classDef runnable fill:#fff3e0,stroke:#e65100,stroke-width:2px
+classDef export fill:#ffebee,stroke:#b71c1c,stroke-width:3px
+
+class I1,I2,I3,I4 input
+class T1,T2,T3,T4,T5,T6,T7,T8,T9 task
+class O2,O3,O4,O5,O6,O7,O8 output
+class R1,R2,R3,R4,R5,R6,R7,R8,R9 runnable
+class E3,E1,E2 export
+
+%% ============================================================================
+%% BOTTOM ALIGNMENT HACK
+%% ============================================================================
+bottomAlign["🌐 Published to Web"]
+style bottomAlign fill:#ffffff,stroke:#ffffff
+
+E1 --> bottomAlign
+E2 --> bottomAlign
+E3 --> bottomAlign
