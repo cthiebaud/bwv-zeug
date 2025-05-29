@@ -63,10 +63,11 @@ def extract_ties_from_svg(svg_file_path):
     for element in root.iter():
         element_id = element.get('id')
         if element_id and element_id.startswith('notehead-'):
-            # Find href for this element
+            # Find href for this element (could be in child <a> elements)
             href = find_element_href(element)
             if href:
                 note_id_to_href[element_id] = clean_href_path(href)
+                print(f"🔍 Found notehead: {element_id} -> {clean_href_path(href)}")
     
     print(f"📊 Found {len(note_id_to_href)} noteheads with IDs")
     
@@ -121,7 +122,8 @@ def extract_ties_from_svg(svg_file_path):
 def find_element_href(element):
     """
     Find the xlink:href attribute for an element, checking the element itself
-    and its child <a> elements.
+    and its child <a> elements. Also handles the case where the element is
+    a <g> wrapper around an <a> element (LilyPond's SVG structure).
     
     Args:
         element: XML element to search
@@ -134,7 +136,7 @@ def find_element_href(element):
     if href:
         return href
     
-    # Look for href in child <a> elements
+    # Look for href in child <a> elements (this is the common case)
     for child in element.iter():
         child_href = child.get('{http://www.w3.org/1999/xlink}href')
         if child_href:
