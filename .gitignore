@@ -13,3 +13,8 @@ tasks_generated.py
 
 # Build cache
 .build_cache.json
+
+*.log
+*.midi
+*.svg
+*.pdf
