@@ -1,5 +1,7 @@
 \version "2.25.26"
 
+% docker run -v ".:/work" codello/lilypond:dev --svg -I /work/includes test/test_ties.ly 1>logs/test_ties.log 2>&1 && mv test_ties*.* target
+
 \include "tie-attributes.ily"
 
 \header {
@@ -12,22 +14,22 @@
   \new StaffGroup <<
     \new Staff = "upper" {
       \clef treble
-      \time 4/4
+      \time 2/4
       
       % Simple ties
-      c'2~ c'4 d'4 |
+      c'2~ | c'4 d'4 |
       
       % More complex ties across bar lines
       e'1~ |
-      e'2 f'2~ |
-      f'4 g'2.~ |
-      g'1 |
+      e'2 | f'2~ |
+      f'4 r | g'2.~ |
+      g'2 |
       
-      % Chord ties
-      <c' e' g'>2~ <c' e' g'>2 |
+      % ties in chord
+      <c' e' g'~>4 <c' e' g'> |
       
       % Mixed tied and untied notes
-      a'4~ a'8 b'8 c''4 d''4 |
+      a'4~ a'8 b'8 | c''4 | d''4 |
       
       \bar "|."
     }

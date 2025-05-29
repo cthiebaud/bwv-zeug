@@ -35,11 +35,13 @@
               
               (set! note-counter (+ note-counter 1))
               (let ((note-id (format #f "notehead-~a" note-counter)))
-                (ly:grob-set-property! grob 'id note-id)
                 (display (format #f ">>> Set note head ID: ~a\n" note-id))
                 
                 (let ((existing-attrs (ly:grob-property grob 'output-attributes '()))
                       (role "none"))
+                  
+                  ;; ADD THE ID TO OUTPUT-ATTRIBUTES (this was missing!)
+                  (set! existing-attrs (acons "id" note-id existing-attrs))
                   
                   (display ">>> Checking if this note head completes any pending ties\n")
                   (let ((matching-tie (find (lambda (pending)
@@ -55,12 +57,19 @@
                         (set! role "end")
                         (set! existing-attrs (acons "data-tie-from" (string-append "#" tie-start-id) existing-attrs))
                         
+                        ;; Update the start grob's output-attributes, ensuring it has an id too
                         (ly:grob-set-property! tie-start-grob 'output-attributes
-                                               (acons "data-tie-to" (string-append "#" note-id)
-                                                      (let ((start-attrs (ly:grob-property tie-start-grob 'output-attributes '())))
-                                                        (if (assoc "data-tie-role" start-attrs)
+                                               (let ((start-attrs (ly:grob-property tie-start-grob 'output-attributes '())))
+                                                 ;; Make sure start grob has its id in output-attributes
+                                                 (let ((start-attrs-with-id 
+                                                        (if (assoc "id" start-attrs)
                                                             start-attrs
-                                                            (acons "data-tie-role" "start" start-attrs)))))
+                                                            (acons "id" tie-start-id start-attrs))))
+                                                   ;; Add the tie-to and role attributes
+                                                   (acons "data-tie-to" (string-append "#" note-id)
+                                                          (if (assoc "data-tie-role" start-attrs-with-id)
+                                                              start-attrs-with-id
+                                                              (acons "data-tie-role" "start" start-attrs-with-id))))))
                         
                         (set! pending-ties (remove (lambda (p) (eq? p matching-tie)) pending-ties))
                         (set! completed-ties (cons (list tie-start-grob grob tie-start-id note-id) completed-ties)))))

@@ -1,5 +1,10 @@
 \version "2.24.0"
 
+% cd lilypond
+% docker run -v ".:/work" codello/lilypond:dev --svg -I /work/includes test/test_ties_chain.ly 1>logs/test_ties_chain.log 2>&1 && mv test_ties_chain*.* target
+% cd ..
+% python python/extract_ties.py -i lilypond/target/test_ties_chain.svg -o ties.csv
+
 \include "tie-attributes.ily"
 
 \header {
