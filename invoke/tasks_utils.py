@@ -12,17 +12,17 @@ import inspect
 import json
 import os
 import re
+import sys
+import subprocess
 from collections import defaultdict
 from datetime import datetime
 from invoke import task
-from pathlib import Path
 from pathlib import Path
 
 # =============================================================================
 # git project detection
 # =============================================================================
 
-import subprocess
 
 def detect_project_name():
     """Detect project name from git repository root directory, fallback to current directory."""
@@ -166,6 +166,24 @@ def smart_print(*args, **kwargs):
 builtins.print = smart_print
 
 # ==============================================================================
+# GENTLE ERROR HANDLING
+# ==============================================================================
+
+def gentle_exit(message, exit_code=1):
+    """
+    Exit gracefully with a user-friendly message.
+    
+    Args:
+        message: User-friendly error message
+        exit_code: Exit code (default 1 for error)
+    """
+    print(f"")
+    print(f"💔 Build failed:")
+    print(f"   {message}")
+    print(f"")
+    sys.exit(exit_code)
+
+# ==============================================================================
 # BUILD CACHE SYSTEM
 # ==============================================================================
 
@@ -229,7 +247,7 @@ def remove_outputs(*filenames, force=True):
             path.unlink()
             deleted.append(path.name)
 
-    print("�️ Deleted:", end="")
+    print("🗑️ Deleted:", end="")
     if deleted:
         print()  # Add newline for multi-line format
         for d in deleted:
@@ -275,9 +293,9 @@ def smart_task(c, *, sources, targets, commands=None, python_func=None, force=Fa
     """
     # Validate that exactly one of commands or python_func is provided
     if commands and python_func:
-        raise ValueError("Cannot specify both 'commands' and 'python_func'")
+        gentle_exit("Internal error: Cannot specify both 'commands' and 'python_func'")
     if not commands and not python_func:
-        raise ValueError("Must specify either 'commands' or 'python_func'")
+        gentle_exit("Internal error: Must specify either 'commands' or 'python_func'")
     
     task_name = inspect.stack()[1].function
     print(f"")
@@ -295,23 +313,34 @@ def smart_task(c, *, sources, targets, commands=None, python_func=None, force=Fa
                     cmd = cmd.replace('python3 ', 'python3 -u ')
                 print("##############")
                 print(f"{cmd}")
-                c.run(cmd)
+                
+                try:
+                    c.run(cmd)
+                except Exception as e:
+                    gentle_exit(f"Command failed in task '{task_name}': {cmd}")
         
         elif python_func:
-            # Execute Python function
+            # Execute Python function with gentle error handling
             try:
                 python_func()
             except Exception as e:
-                print(f"❌ Python function failed: {e}")
-                raise RuntimeError(f"Task {task_name} failed during Python function execution: {e}")
+                # Try to extract meaningful error message
+                error_msg = str(e)
+                if "returned non-zero exit status" in error_msg:
+                    # Extract the command that failed from subprocess errors
+                    if hasattr(e, 'cmd') and e.cmd:
+                        cmd_str = ' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
+                        gentle_exit(f"Python script failed in task '{task_name}': {cmd_str}")
+                    else:
+                        gentle_exit(f"Python script failed in task '{task_name}': {error_msg}")
+                else:
+                    gentle_exit(f"Task '{task_name}' failed: {error_msg}")
         
         # Validate that all targets were actually created
         missing_targets = [t for t in targets if not Path(t).exists()]
         if missing_targets:
-            print(f"❌ Error: Some targets were not created:")
-            for target in missing_targets:
-                print(f"   • {target}")
-            raise RuntimeError(f"Task {task_name} failed to create all targets")
+            target_list = '\n'.join(f"   • {target}" for target in missing_targets)
+            gentle_exit(f"Task '{task_name}' completed but some output files were not created:\n{target_list}")
         
         if targets:
             print("✅ Generated:")
@@ -370,7 +399,7 @@ def run_bwv_script(script_name, *args):
     script_path = tasks_dir.parent / 'python' / script_name
     
     if not script_path.exists():
-        raise FileNotFoundError(f"BWV script not found: {script_path}")
+        gentle_exit(f"BWV script not found: {script_path}")
     
     # Get project name from detect_project_name
     project_name = detect_project_name()
@@ -383,5 +412,28 @@ def run_bwv_script(script_name, *args):
     print(f"🐍 Running: python3 {script_path.name} {' '.join(args)}")
     print(f"🔧 PROJECT_NAME={project_name}")
     
-    result = subprocess.run(cmd, env=env, check=True)
+    # Use gentler error handling - don't use check=True
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        print(f"")
+        print(f"🚨 Script output (stdout):")
+        if result.stdout.strip():
+            for line in result.stdout.strip().split('\n'):
+                print(f"   {line}")
+        else:
+            print(f"   (no stdout)")
+            
+        print(f"")
+        print(f"🚨 Script errors (stderr):")
+        if result.stderr.strip():
+            for line in result.stderr.strip().split('\n'):
+                print(f"   {line}")
+        else:
+            print(f"   (no stderr)")
+        
+        # Create a proper exception that smart_task can catch
+        from subprocess import CalledProcessError
+        raise CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+    
     return result

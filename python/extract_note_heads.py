@@ -12,22 +12,26 @@ animated score following applications.
 
 Process Overview:
 1. Parse LilyPond-generated SVG to find clickable notehead elements
-2. Extract pitch information from LilyPond source code via href links  
+2. Extract pitch information from LilyPond source code via href links (file paths embedded in href)
 3. Determine visual coordinates for each notehead
 4. Create sorted dataset ordered by visual appearance (left-to-right, top-to-bottom)
-5. Project-aware file naming with fallback to explicit arguments
+5. Export CSV with required arguments for input SVG and output path
 
 Input Files:
-- SVG file with embedded LilyPond cross-references
-- Original LilyPond (.ly) source file for pitch extraction
+- SVG file with embedded LilyPond cross-references (href contains .ly file paths)
 
 Output:
-- CSV file with notehead coordinates, pitches, and reference links
+- CSV file with notehead coordinates, pitches, and reference links in format: snippet,href,x,y
 """
 
 import re
 import csv
 import xml.etree.ElementTree as ET
+import argparse
+import os
+import sys
+import pandas as pd
+from _scripts_utils import save_dataframe_with_lilypond_csv
 
 # =============================================================================
 # LILYPOND PITCH PATTERN MATCHING
@@ -47,7 +51,7 @@ note_regex = re.compile(r"""
 # LILYPOND SOURCE CODE PARSING FUNCTION
 # =============================================================================
 
-def extract_text_from_href(href, ly_file):
+def extract_text_from_href(href):
     """
     Extract LilyPond pitch notation from cross-reference URLs.
     
@@ -58,13 +62,12 @@ def extract_text_from_href(href, ly_file):
     
     Args:
         href (str): TextEdit URL from SVG (e.g., "textedit:///work/file.ly:25:10")
-        ly_file (str): Path to LilyPond source file
         
     Returns:
         str or None: LilyPond pitch notation (e.g., "cis'") or None if not found
         
     URL Format: textedit:///work/filepath:line:column
-    - filepath: Path to .ly source file
+    - filepath: Path to .ly source file (extracted from href)
     - line: 1-based line number  
     - column: 1-based character position
     """
@@ -102,149 +105,175 @@ def extract_text_from_href(href, ly_file):
     except Exception as e:
         return f"(error: {e})"
 
+def setup_argument_parser():
+    """Setup command line argument parser."""
+    parser = argparse.ArgumentParser(
+        description="Extract notehead positions and pitch information from SVG files",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python extract_note_heads.py -i score.svg -o noteheads.csv
+  python extract_note_heads.py --input music.svg --output music_note_heads.csv
+        """
+    )
+    
+    parser.add_argument('-i', '--input', 
+                       required=True,
+                       help='Input SVG file path (required)')
+    
+    parser.add_argument('-o', '--output',
+                       required=True, 
+                       help='Output CSV file path for noteheads (required)')
+    
+    return parser.parse_args()
+
 def main():
-    """Main function with project context support."""
+    """Main function with command line argument support."""
     
-    try:
-        # Try to use project context system
-        from _scripts_utils import get_project_name
-        
-        project_name = get_project_name()
-        svg_file = f"{project_name}_ly_one_line.svg"
-        ly_file = f"{project_name}.ly"
-        output_csv = f"{project_name}_note_heads.csv"
-        
-    except ImportError:
-        # Fallback for standalone use
-        print("⚠️  _scripts_utils not available - using default file names")
-        svg_file = "bwv1006_ly_one_line.svg"
-        ly_file = "bwv1006.ly"
-        output_csv = "bwv1006_note_heads.csv"
+    print("🎼 SVG Notehead Extractor")
+    print("=" * 50)
     
-    print(f"🎼 Processing musical score:")
-    print(f"   📄 SVG source: {svg_file}")
-    print(f"   🎵 LilyPond source: {ly_file}")
+    # Parse arguments
+    args = setup_argument_parser()
+    
+    svg_file = args.input
+    output_csv = args.output
+    
+    print(f"📄 Input SVG: {svg_file}")
+    print(f"📊 Output CSV: {output_csv}")
+    print()
 
     # =================================================================
     # XML NAMESPACE SETUP AND FILE LOADING
     # =================================================================
 
-    print("🔍 Loading and parsing SVG file...")
+    try:
+        print("🔍 Loading and parsing SVG file...")
 
-    # Load SVG file
-    with open(svg_file, encoding="utf-8") as f:
-        svg = ET.parse(f)
+        # Verify SVG file exists
+        if not os.path.exists(svg_file):
+            raise FileNotFoundError(f"SVG file not found: {svg_file}")
 
-    # SVG namespaces for XPath queries
-    NS = {'svg': 'http://www.w3.org/2000/svg', 'xlink': 'http://www.w3.org/1999/xlink'}
-    root = svg.getroot()
+        # Load SVG file
+        with open(svg_file, encoding="utf-8") as f:
+            svg = ET.parse(f)
 
-    # =================================================================
-    # NOTEHEAD DISCOVERY AND COORDINATE EXTRACTION
-    # =================================================================
+        # SVG namespaces for XPath queries
+        NS = {'svg': 'http://www.w3.org/2000/svg', 'xlink': 'http://www.w3.org/1999/xlink'}
+        root = svg.getroot()
 
-    print("📍 Extracting notehead positions and pitch data...")
+        # =================================================================
+        # NOTEHEAD DISCOVERY AND COORDINATE EXTRACTION
+        # =================================================================
 
-    # Storage for discovered noteheads
-    notehead_data = []
+        print("📍 Extracting notehead positions and pitch data...")
 
-    # Find all clickable <a> elements (these contain the noteheads)
-    for a in root.findall(".//svg:a", NS):
-        # Get the cross-reference URL
-        href = a.get(f"{{{NS['xlink']}}}href")
-        
-        # Extract pitch information from the href
-        snippet = extract_text_from_href(href, ly_file)
+        # Storage for discovered noteheads
+        notehead_data = []
 
-        # Skip if we couldn't extract valid pitch information
-        if not snippet is None:
-            # Find the graphical group element containing visual positioning
-            g = a.find("svg:g", NS)
+        # Find all clickable <a> elements (these contain the noteheads)
+        for a in root.findall(".//svg:a", NS):
+            # Get the cross-reference URL
+            href = a.get(f"{{{NS['xlink']}}}href")
             
-            if g is not None:
-                # Extract coordinate transformation from the group's transform attribute
-                transform = g.attrib.get("transform", "")
+            # Extract pitch information from the href
+            snippet = extract_text_from_href(href)
+
+            # Skip if we couldn't extract valid pitch information
+            if not snippet is None:
+                # Find the graphical group element containing visual positioning
+                g = a.find("svg:g", NS)
                 
-                # Parse translation coordinates: "translate(x, y)" or "translate(x,y)"
-                match = re.search(r"translate\(([-\d.]+)[ ,]+([-\d.]+)", transform)
-                
-                if not match:
-                    print(f"no matching transform near <a> of [{href}] for snippet [{snippet}]")
-                
-                if match:
-                    # Extract and convert coordinates
-                    x = float(match.group(1))
-                    y = float(match.group(2))
+                if g is not None:
+                    # Extract coordinate transformation from the group's transform attribute
+                    transform = g.attrib.get("transform", "")
                     
-                    # Store the notehead information
-                    notehead_data.append({
-                        "x": x,
-                        "y": y,
-                        "href": href,
-                        "snippet": snippet
-                    })
+                    # Parse translation coordinates: "translate(x, y)" or "translate(x,y)"
+                    match = re.search(r"translate\(([-\d.]+)[ ,]+([-\d.]+)", transform)
+                    
+                    if not match:
+                        print(f"no matching transform near <a> of [{href}] for snippet [{snippet}]")
+                    
+                    if match:
+                        # Extract and convert coordinates
+                        x = float(match.group(1))
+                        y = float(match.group(2))
+                        
+                        # Store the notehead information
+                        notehead_data.append({
+                            "x": x,
+                            "y": y,
+                            "href": href,
+                            "snippet": snippet
+                        })
 
-    print(f"   📊 Processed {len(root.findall('.//svg:a', NS))} anchor elements")
-    print(f"   ✅ Found {len(notehead_data)} valid noteheads with pitch data") 
+        print(f"   📊 Processed {len(root.findall('.//svg:a', NS))} anchor elements")
+        print(f"   ✅ Found {len(notehead_data)} valid noteheads with pitch data") 
 
-    # =================================================================
-    # SPATIAL SORTING FOR VISUAL ALIGNMENT
-    # =================================================================
+        # =================================================================
+        # SPATIAL SORTING FOR VISUAL ALIGNMENT
+        # =================================================================
 
-    print("📐 Sorting noteheads by visual position...")
+        print("📐 Sorting noteheads by visual position...")
 
-    # Sort noteheads by visual reading order:
-    # 1. Primary sort: x-coordinate (left to right across the staff)  
-    # 2. Secondary sort: y-coordinate (top to bottom for simultaneous notes)
-    #    Note: Negative y-coordinate because SVG y=0 is at top, music reads top-to-bottom
-    notehead_data.sort(key=lambda n: (n["x"], -n["y"]))  # descending y = top-to-bottom
+        # Sort noteheads by visual reading order:
+        # 1. Primary sort: x-coordinate (left to right across the staff)  
+        # 2. Secondary sort: y-coordinate (top to bottom for simultaneous notes)
+        #    Note: Negative y-coordinate because SVG y=0 is at top, music reads top-to-bottom
+        notehead_data.sort(key=lambda n: (n["x"], -n["y"]))  # descending y = top-to-bottom
 
-    print(f"   🎯 Sorted {len(notehead_data)} noteheads in reading order")
+        print(f"   🎯 Sorted {len(notehead_data)} noteheads in reading order")
 
-    # =================================================================
-    # CSV EXPORT
-    # =================================================================
+        # =================================================================
+        # CSV EXPORT
+        # =================================================================
 
-    print(f"💾 Writing results to {output_csv}...")
+        print(f"💾 Writing results to {output_csv}...")
 
-    # Define CSV structure with all relevant data for downstream processing
-    with open(output_csv, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["index", "x", "y", "snippet", "href"])
+        # Convert notehead data to DataFrame for consistent CSV handling
+        notehead_df = pd.DataFrame(notehead_data)
         
-        # Write header row
-        writer.writeheader()
+        # Reorder columns to match requested format: snippet, href, x, y
+        notehead_df = notehead_df[["snippet", "href", "x", "y"]]
         
-        # Write data rows with sequential indexing
-        for i, note in enumerate(notehead_data, 1):
-            writer.writerow({
-                "index": i,                             # Sequential position number
-                "x": round(note["x"], 3),              # X-coordinate (3 decimal precision)
-                "y": round(note["y"], 3),              # Y-coordinate (3 decimal precision)  
-                "snippet": note["snippet"],            # LilyPond pitch notation
-                "href": note["href"]                   # Original cross-reference URL
-            })
-
-    # =================================================================
-    # COMPLETION SUMMARY
-    # =================================================================
-
-    extraction_summary = f"[ extracted {len(notehead_data)} noteheads with coordinates and pitch data ]"
-    print(f"✅ Export complete: {output_csv} {extraction_summary}")
-
-    # Additional statistics for verification
-    if notehead_data:
-        x_range = max(n["x"] for n in notehead_data) - min(n["x"] for n in notehead_data)
-        y_range = max(n["y"] for n in notehead_data) - min(n["y"] for n in notehead_data)
-        unique_pitches = len(set(n["snippet"] for n in notehead_data))
+        # Round coordinates to 3 decimal precision
+        notehead_df["x"] = notehead_df["x"].round(3)
+        notehead_df["y"] = notehead_df["y"].round(3)
         
-        print(f"\n📊 Extraction Statistics:")
-        print(f"   📏 X-coordinate range: {x_range:.1f} units")
-        print(f"   📐 Y-coordinate range: {y_range:.1f} units") 
-        print(f"   🎵 Unique pitch notations: {unique_pitches}")
-        print(f"   🔗 Average notes per pitch: {len(notehead_data)/unique_pitches:.1f}")
+        # Use utility function to handle LilyPond notation CSV quoting
+        save_dataframe_with_lilypond_csv(notehead_df, output_csv)
 
-    print(f"\n🎯 Ready for alignment with MIDI data in next pipeline stage")
+        # =================================================================
+        # COMPLETION SUMMARY
+        # =================================================================
+
+        extraction_summary = f"[ extracted {len(notehead_data)} noteheads with coordinates and pitch data ]"
+        print(f"✅ Export complete: {output_csv} {extraction_summary}")
+
+        # Additional statistics for verification
+        if notehead_data:
+            x_range = max(n["x"] for n in notehead_data) - min(n["x"] for n in notehead_data)
+            y_range = max(n["y"] for n in notehead_data) - min(n["y"] for n in notehead_data)
+            unique_pitches = len(set(n["snippet"] for n in notehead_data))
+            
+            print(f"\n📊 Extraction Statistics:")
+            print(f"   📏 X-coordinate range: {x_range:.1f} units")
+            print(f"   📐 Y-coordinate range: {y_range:.1f} units") 
+            print(f"   🎵 Unique pitch notations: {unique_pitches}")
+            print(f"   🔗 Average notes per pitch: {len(notehead_data)/unique_pitches:.1f}")
+
+        print()
+        print("🎉 Notehead extraction completed successfully!")
+        print(f"🎯 Ready for alignment with MIDI data in next pipeline stage")
+
+    except FileNotFoundError as e:
+        print(f"❌ File error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
-

@@ -3,14 +3,63 @@
 _scripts_utils.py - Project context utilities for BWV scripts
 
 This module provides utilities for BWV musical score processing scripts,
-handling file naming conventions and argument parsing patterns.
-
-The only interface with the build system is the PROJECT_NAME environment variable.
+handling file naming conventions, argument parsing patterns, and musical notation conversion.
 """
 
 import os
 import sys
 import argparse
+import csv
+import pandas as pd
+import subprocess
+from pathlib import Path
+from functools import lru_cache
+
+@lru_cache(maxsize=None)
+def get_project_name():
+    """Detect project name from git repository root directory, fallback to current directory."""
+    project_name = None
+    
+    # Try git first
+    try:
+        result = subprocess.run(['git', 'rev-parse', '--show-toplevel'], 
+                              capture_output=True, text=True, check=True)
+        git_project_name = Path(result.stdout.strip()).name
+        
+        # Check if the main .ly file exists with git name
+        main_ly_file = f"{git_project_name}.ly"
+        if Path(main_ly_file).exists():
+            print(f"🎼 Detected project from git: {git_project_name}")
+            return git_project_name
+        else:
+            print(f"⚠️  Git repo name '{git_project_name}' doesn't match .ly file, trying directory name...")
+            
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("ℹ️  Not in a git repository, trying directory name...")
+    
+    # Fallback to current directory name
+    project_name = Path.cwd().name
+    main_ly_file = f"{project_name}.ly"
+    
+    if Path(main_ly_file).exists():
+        print(f"🎼 Detected project from current directory: {project_name}")
+        return project_name
+    
+    # If we get here, neither git name nor directory name worked
+    raise RuntimeError(
+        f"Main LilyPond file not found. Tried:\n"
+        f"  - {Path.cwd().name}.ly (current directory)\n"
+        f"Make sure you're in a directory containing a .ly file matching the directory name."
+    )
+
+@lru_cache(maxsize=None)
+def load_project_config(project_name):
+    """Load and cache project configuration"""
+    config_file = f"{project_name}_config.yaml"
+    if os.path.exists(config_file):
+        with open(config_file) as f:
+            return yaml.safe_load(f)
+    return {}
 
 def get_io_files(description, input_pattern, output_pattern):
     """
@@ -24,7 +73,7 @@ def get_io_files(description, input_pattern, output_pattern):
     Returns:
         tuple: (input_file, output_file) as strings
     """
-    project_name = os.getenv("PROJECT_NAME")
+    project_name = get_project_name()
     
     if project_name:
         # Build system mode - use project conventions
@@ -40,10 +89,6 @@ def get_io_files(description, input_pattern, output_pattern):
             print("Or run from build system with PROJECT_NAME environment variable")
             sys.exit(1)
         return sys.argv[1], sys.argv[2]
-
-def get_project_name():
-    """Get project name for multi-input scripts like align_pitch_by_geometry_simplified.py"""
-    return os.getenv("PROJECT_NAME", "bwv1006")
 
 def setup_project_context(script_purpose, input_pattern=None, output_pattern=None, extra_args=None):
     """
@@ -61,7 +106,7 @@ def setup_project_context(script_purpose, input_pattern=None, output_pattern=Non
     Returns:
         argparse.Namespace: Parsed arguments with input/output paths
     """
-    project_name = os.getenv("PROJECT_NAME")
+    project_name = get_project_name()
     
     parser = argparse.ArgumentParser(description=script_purpose)
     
@@ -112,3 +157,174 @@ def setup_project_context(script_purpose, input_pattern=None, output_pattern=Non
     
     return args
 
+# =============================================================================
+# MUSICAL NOTATION CONVERSION UTILITIES
+# =============================================================================
+
+def midi_pitch_to_lilypond(midi_pitch):
+    """
+    Convert MIDI pitch number to LilyPond note notation.
+    
+    LilyPond Notation System:
+    ========================
+    - Base notes: c, d, e, f, g, a, b (letter names)
+    - Sharps: add 'is' (cis = C#, fis = F#)
+    - Octaves up: add apostrophes (c' = C5, c'' = C6)
+    - Octaves down: add commas (c, = C3, c,, = C2)
+    
+    This function uses sharps rather than flats for simplicity and consistency.
+    The octave system follows LilyPond's standard where middle C (MIDI 60) = 'c'.
+    
+    Args:
+        midi_pitch (int): MIDI pitch number (0-127)
+        
+    Returns:
+        str: LilyPond notation (e.g., "cis'", "c,", "bes")
+        
+    Examples:
+        60 -> "c" (C4/middle C in MIDI)
+        61 -> "cis" (C#4)  
+        48 -> "c," (C3)
+        72 -> "c'" (C5)
+    """
+    if midi_pitch < 0 or midi_pitch > 127:
+        return f"invalid_pitch_{midi_pitch}"
+    
+    # Base note names with sharps preferred over flats
+    pitch_class_to_note = {
+        0: 'c',    # C
+        1: 'cis',  # C# (prefer over des)
+        2: 'd',    # D
+        3: 'dis',  # D# (prefer over ees)
+        4: 'e',    # E
+        5: 'f',    # F
+        6: 'fis',  # F# (prefer over ges)
+        7: 'g',    # G
+        8: 'gis',  # G# (prefer over aes)
+        9: 'a',    # A
+        10: 'ais', # A# (prefer over bes)
+        11: 'b'    # B
+    }
+    
+    # Calculate pitch class (0-11) and octave
+    pitch_class = midi_pitch % 12
+    octave = midi_pitch // 12
+    
+    # Get base note name
+    base_note = pitch_class_to_note[pitch_class]
+    
+    # LilyPond's reference octave is 4 (where C4 = MIDI 60 = "c")
+    # This aligns with LilyPond's default middle octave
+    reference_octave = 4
+    octave_difference = octave - reference_octave
+    
+    # Add octave modifiers
+    if octave_difference > 0:
+        # Higher octaves: add apostrophes
+        octave_suffix = "'" * octave_difference
+    elif octave_difference < 0:
+        # Lower octaves: add commas
+        octave_suffix = "," * abs(octave_difference)
+    else:
+        # Reference octave: no modifier
+        octave_suffix = ""
+    
+    return base_note + octave_suffix
+
+def lilypond_to_midi_pitch(note_str):
+    """
+    Convert LilyPond note notation to MIDI pitch value.
+    
+    LilyPond Notation System:
+    ========================
+    - Base notes: c, d, e, f, g, a, b (letter names)
+    - Sharps: add 'is' (cis = C#, fis = F#)
+    - Flats: add 'es' or 's' (bes = Bb, as = Ab) 
+    - Double sharps: add 'isis' (cisis = C##)
+    - Double flats: add 'eses' (ceses = Cbb)
+    - Octaves up: add apostrophes (c' = C4, c'' = C5)
+    - Octaves down: add commas (c, = C2, c,, = C1)
+    
+    Args:
+        note_str (str): LilyPond notation (e.g., "cis'", "bes,,", "f")
+        
+    Returns:
+        int: MIDI pitch number (0-127), or -1 if parsing failed
+        
+    Examples:
+        "c" -> 60 (C4/middle C in MIDI)
+        "cis'" -> 73 (C#5)  
+        "c," -> 48 (C3)
+    """
+    # Base MIDI values for middle octave (C4=60 to B4=71)
+    # This octave choice aligns with LilyPond's default octave
+    base_notes = {
+        # Natural notes
+        'c': 60, 'd': 62, 'e': 64, 'f': 65, 'g': 67, 'a': 69, 'b': 71,
+        
+        # Single accidentals (sharps)
+        'cis': 61, 'dis': 63, 'fis': 66, 'gis': 68, 'ais': 70,
+        
+        # Single accidentals (flats) - multiple spellings supported
+        'des': 61, 'es': 63, 'ees': 63, 'ges': 66, 'aes': 68, 'as': 68, 'bes': 70,
+        
+        # Enharmonic edge cases (rare but valid)
+        'eis': 65,  # E# = F
+        'bis': 72,  # B# = C (next octave)
+        'ces': 59,  # Cb = B (previous octave) 
+        'fes': 64,  # Fb = E
+        
+        # Double accidentals (very rare in practice)
+        'cisis': 62, 'disis': 64, 'eisis': 66, 'fisis': 67, 'gisis': 69,
+        'aisis': 71, 'bisis': 73,
+        'ceses': 58, 'deses': 60, 'eses': 62, 'feses': 63, 'geses': 65, 
+        'aeses': 67, 'beses': 69
+    }
+    
+    # Generate octave variations - lower octaves (commas)
+    # Each comma drops the pitch by one octave (12 semitones)
+    base_notes_copy = dict(base_notes)  # Avoid modifying during iteration
+    for comma_count in range(1, 4):  # Support up to 3 octaves down
+        for base_note, base_pitch in base_notes_copy.items():
+            octave_note = base_note + (',' * comma_count)
+            octave_pitch = base_pitch - (comma_count * 12)
+            if octave_pitch >= 0:  # Stay within MIDI range
+                base_notes[octave_note] = octave_pitch
+    
+    # Generate octave variations - higher octaves (apostrophes)  
+    # Each apostrophe raises the pitch by one octave (12 semitones)
+    for apostrophe_count in range(1, 8):  # Support up to 7 octaves up
+        for base_note, base_pitch in base_notes_copy.items():
+            octave_note = base_note + ("'" * apostrophe_count)
+            octave_pitch = base_pitch + (apostrophe_count * 12)
+            if octave_pitch <= 127:  # Stay within MIDI range
+                base_notes[octave_note] = octave_pitch
+    
+    # Look up the note, returning -1 if not found
+    cleaned_note = note_str.strip()
+    return base_notes.get(cleaned_note, -1)
+
+def save_dataframe_with_lilypond_csv(dataframe, output_path, **kwargs):
+    """
+    Save a pandas DataFrame to CSV with proper quoting for LilyPond notation.
+    
+    This function ensures that LilyPond notation containing commas (like "c,", "c,,")
+    is properly quoted in the CSV file to avoid parsing issues.
+    
+    Args:
+        dataframe (pd.DataFrame): DataFrame to save
+        output_path (str): Output CSV file path
+        **kwargs: Additional arguments to pass to DataFrame.to_csv()
+    """
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else '.', exist_ok=True)
+    
+    # Use QUOTE_NONNUMERIC to properly handle LilyPond notation with commas
+    # This ensures values like "c," are quoted as "c," in the CSV
+    default_kwargs = {
+        'index': False,
+        'quoting': csv.QUOTE_NONNUMERIC
+    }
+    default_kwargs.update(kwargs)
+    
+    dataframe.to_csv(output_path, **default_kwargs)

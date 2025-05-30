@@ -11,9 +11,9 @@ from antlr4 import *
 
 # Import generated ANTLR classes
 try:
-    from MermaidPipelineLexer import MermaidPipelineLexer
-    from MermaidPipelineParser import MermaidPipelineParser
-    from MermaidPipelineParserListener import MermaidPipelineParserListener
+    from antlr.MermaidPipelineLexer import MermaidPipelineLexer
+    from antlr.MermaidPipelineParser import MermaidPipelineParser
+    from antlr.MermaidPipelineParserListener import MermaidPipelineParserListener
 except ImportError as e:
     print(f"❌ Error importing ANTLR classes: {e}")
     sys.exit(1)
@@ -210,7 +210,19 @@ def get_task_command(task_id, edges, nodes):
                     # Replace project name placeholder and fix path
                     command = command.replace('BWV000', '{PROJECT_NAME}')
                     command = command.replace('PWD', f'{{Path.cwd()}}')
+
+                    # Add lilypond includes volume mount to /work/includes
+                    lilypond_includes_path = Path(__file__).parent / ".." / "lilypond" / "includes"
+                    lilypond_includes_abs = lilypond_includes_path.resolve()
+                    
+                    # Insert the lilypond volume right after "docker run"
+                    command = command.replace('docker run', f'docker run -v {lilypond_includes_abs}:/work/includes')
+                    
+                    # Replace INCLUDES marker with the actual include flag
+                    command = command.replace('INCLUDES', '-I /work/includes')
+                                            
                     return f'f"{command}"'
+                
                 elif command.startswith('bwv_script:'):
                     # Extract script name and arguments  
                     # Format: "bwv_script:script_name.py arg1 arg2 ..."

@@ -26,7 +26,7 @@
   \layout {
     \context {
       \Voice
-      \consists \Tie_data_engraver
+      \consists \Tie_grob_engraver
     }
   }
 }

@@ -3,7 +3,7 @@
 Minimal Mermaid Utils - Parse .mmd files and generate Invoke tasks
 """
 
-VERSION = "3.8.0"
+VERSION = "4.0.0"
 
 import textwrap
 import sys
@@ -12,9 +12,9 @@ from antlr4 import *
 
 # Import generated ANTLR classes
 try:
-    from MermaidPipelineLexer import MermaidPipelineLexer
-    from MermaidPipelineParser import MermaidPipelineParser
-    from MermaidPipelineParserListener import MermaidPipelineParserListener
+    from antlr.MermaidPipelineLexer import MermaidPipelineLexer
+    from antlr.MermaidPipelineParser import MermaidPipelineParser
+    from antlr.MermaidPipelineParserListener import MermaidPipelineParserListener
 except ImportError as e:
     print(f"❌ Error importing ANTLR classes: {e}")
     print("💡 Make sure you have generated the ANTLR classes with:")
@@ -181,193 +181,6 @@ class MermaidDisplayListener(MermaidPipelineParserListener):
     def enterComment(self, ctx):
         """Handle comments (mostly ignore but could log)."""
         pass
-
-# =============================================================================
-# TASK GENERATION FUNCTIONS (same as v2.9.0)
-# =============================================================================
-
-def get_node_by_id(nodes, node_id):
-    """Get node by its ID."""
-    return next((n for n in nodes if n['id'] == node_id), None)
-
-def get_nodes_by_type(nodes, node_type):
-    """Get all nodes of a specific type."""
-    return [n for n in nodes if n['type'] == node_type]
-
-def trace_task_dependencies(task_id, edges, nodes):
-    """
-    Trace task dependencies by following the graph.
-    Returns list of task function names that this task depends on.
-    """
-    dependencies = []
-    
-    # Strategy: Follow the pipeline flow backwards
-    # For each task, find what it needs to run before it
-    
-    # Method 1: Direct task dependencies (T -> T)
-    for from_node, to_node in edges:
-        if to_node == task_id and from_node.startswith('T'):
-            dep_task = get_node_by_id(nodes, from_node)
-            if dep_task:
-                dependencies.append(dep_task['content'])
-    
-    # Method 2: Dependencies through outputs (O -> T means T depends on whatever creates O)
-    for from_node, to_node in edges:
-        if to_node == task_id and from_node.startswith('O'):
-            # Find what runnable creates this output
-            for r_from, r_to in edges:
-                if r_to == from_node and r_from.startswith('R'):
-                    # Find what task creates this runnable
-                    for t_from, t_to in edges:
-                        if t_to == r_from and t_from.startswith('T'):
-                            dep_task = get_node_by_id(nodes, t_from)
-                            if dep_task:
-                                dependencies.append(dep_task['content'])
-    
-    # Remove duplicates and return
-    return list(set(dependencies))
-
-def get_task_sources(task_id, edges, nodes):
-   """
-   Determine source files for a task based on input dependencies.
-   Returns the complete sources expression as a string for direct use in code generation.
-   """
-   print(f"🔍 DEBUG get_task_sources for {task_id}")
-   path_sources = []
-   
-   # Find inputs that flow to this task
-   for from_node, to_node in edges:
-       if to_node == task_id:
-           print(f"   Found edge: {from_node} -> {to_node}")
-           if from_node.startswith('I'):
-               print(f"   Processing Input: {from_node}")
-               # Direct input files (I -> T)
-               input_node = get_node_by_id(nodes, from_node)
-               if input_node:
-                   filename = input_node['content']
-                   if 'BWV000' in filename:
-                       filename = filename.replace('BWV000', '{PROJECT_NAME}')
-                       path_sources.append(f'Path(f"{filename}")')
-                   else:
-                       path_sources.append(f'Path("{filename}")')
-           elif from_node.startswith('O'):
-               print(f"   Processing Output: {from_node}")
-               # Output files from previous tasks (O -> T)
-               output_node = get_node_by_id(nodes, from_node)
-               if output_node:
-                   filename = output_node['content']
-                   if 'BWV000' in filename:
-                       filename = filename.replace('BWV000', '{PROJECT_NAME}')
-                       path_sources.append(f'Path(f"{filename}")')
-                   else:
-                       path_sources.append(f'Path("{filename}")')
-                       
-   print(f"   Final path_sources: {path_sources}")
-   # Rest stays the same...
-   
-   # Check if we have .ly files to determine if we need shared sources
-   has_ly_files = any('.ly' in src for src in path_sources)
-   
-   # Build the complete sources expression as a string
-   if path_sources and has_ly_files:
-       path_list = ', '.join(path_sources)
-       return f'[{path_list}] + shared_ly_sources()'
-   elif path_sources:
-       path_list = ', '.join(path_sources)
-       return f'[{path_list}]'
-   elif has_ly_files:
-       return 'shared_ly_sources()'
-   else:
-       return '[]'
-   
-def get_task_targets(task_id, edges, nodes):
-    """
-    Determine target files for a task based on runnable->output/export dependencies.
-    """
-    targets = []
-    
-    # Find the runnable that this task produces (T -> R)
-    runnable_id = None
-    for from_node, to_node in edges:
-        if from_node == task_id and to_node.startswith('R'):
-            runnable_id = to_node
-            break
-    
-    # Find outputs/exports that this runnable produces (R -> O or R -> E)
-    if runnable_id:
-        for from_node, to_node in edges:
-            if from_node == runnable_id and (to_node.startswith('O') or to_node.startswith('E')):
-                target_node = get_node_by_id(nodes, to_node)
-                if target_node:
-                    # Extract filename from content and fix BWV000 placeholder
-                    filename = target_node['content']
-                    filename = filename.replace('BWV000', '{PROJECT_NAME}')
-                    targets.append(f'f"{filename}"')
-    
-    return targets
-
-def get_task_command(task_id, edges, nodes):
-    """
-    Get the command for a task by finding its corresponding runnable.
-    """
-    # Find the runnable that this task maps to (T -> R)
-    for from_node, to_node in edges:
-        if from_node == task_id and to_node.startswith('R'):
-            runnable_node = get_node_by_id(nodes, to_node)
-            if runnable_node:
-                command = runnable_node['content']
-                print(f"   Raw command: '{command}'")
-                
-                # Check if it's a Docker command or Python script
-                if 'docker' in command.lower() and 'run' in command.lower():
-                    # Handle Docker command (fix spacing issues if needed)
-                    # Replace project name placeholder and fix path
-                    command = command.replace('BWV000', '{PROJECT_NAME}')
-                    command = command.replace('PWD', f'{{Path.cwd()}}')
-                    return f'f"{command}"'
-                elif command.startswith('bwv_script:'):
-                    # Extract script name and arguments  
-                    # Format: "bwv_script:script_name.py arg1 arg2 ..."
-                    parts = command.split()
-                    script_part = parts[0]  # "bwv_script:script_name.py"
-                    script_name = script_part.replace('bwv_script:', '')
-                    args = parts[1:] if len(parts) > 1 else []
-                    
-                    # Replace project name in arguments
-                    args = [arg.replace('BWV000', '{PROJECT_NAME}') for arg in args]
-                    
-                    if args:
-                        args_str = ', '.join(f'f"{arg}"' for arg in args)
-                        return f'run_bwv_script("{script_name}", {args_str})'
-                    else:
-                        return f'run_bwv_script("{script_name}")'
-    
-    return None
-
-def debug_task_mapping(task_id, edges, nodes):
-    """Debug function to see what's happening with task mapping."""
-    print(f"\n🔍 Debug task {task_id}:")
-    
-    # Show edges from this task
-    task_edges = [(f, t) for f, t in edges if f == task_id]
-    print(f"   Edges from {task_id}: {task_edges}")
-    
-    # Show edges to this task  
-    to_task_edges = [(f, t) for f, t in edges if t == task_id]
-    print(f"   Edges to {task_id}: {to_task_edges}")
-    
-    # Try to find runnable
-    runnable = None
-    for from_node, to_node in edges:
-        if from_node == task_id and to_node.startswith('R'):
-            runnable = get_node_by_id(nodes, to_node)
-            break
-    
-    print(f"   Found runnable: {runnable['id'] if runnable else 'None'}")
-    if runnable:
-        print(f"   Runnable content: {runnable['content']}")
-    
-    return runnable
 
 # =============================================================================
 # PARSER FUNCTIONS
@@ -600,7 +413,8 @@ def get_final_tasks(mermaid_file):
                 # Find task that produces this runnable (T -> R)
                 for from_node, to_node in listener.edges:
                     if to_node == producing_runnable and from_node.startswith('T'):
-                        task_node = get_node_by_id(listener.nodes, from_node)
+                        # Get node by ID
+                        task_node = next((n for n in listener.nodes if n['id'] == from_node), None)
                         if task_node:
                             final_tasks.append(task_node['content'])
                         break
@@ -629,38 +443,6 @@ def get_status_file_info(mermaid_file):
         status_files.append(('Export', export['description'], export['filename']))
     
     return status_files            
-
-
-def get_final_tasks_from_listener(listener):
-    """
-    Get list of task names that produce final exports from a parsed listener.
-    These are tasks that connect to runnables that produce export nodes.
-    """
-    final_tasks = []
-    
-    # Find all export nodes (E*)
-    export_nodes = [node['id'] for node in listener.nodes if node['type'] == 'E']
-    
-    # For each export, trace back to find the task that produces it
-    for export_id in export_nodes:
-        # Find runnable that produces this export (R -> E)
-        producing_runnable = None
-        for from_node, to_node in listener.edges:
-            if to_node == export_id and from_node.startswith('R'):
-                producing_runnable = from_node
-                break
-        
-        if producing_runnable:
-            # Find task that produces this runnable (T -> R)
-            for from_node, to_node in listener.edges:
-                if to_node == producing_runnable and from_node.startswith('T'):
-                    task_node = get_node_by_id(listener.nodes, from_node)
-                    if task_node:
-                        final_tasks.append(task_node['content'])
-                    break
-    
-    # Remove duplicates and return
-    return list(set(final_tasks))
 
 # =============================================================================
 # MAIN

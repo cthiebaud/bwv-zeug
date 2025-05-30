@@ -71,7 +71,7 @@ Tie_error_detection_engraver = #(make-tie-error-detection-engraver)
 % \layout {
 %   \context {
 %     \Voice
-%     \consists \Tie_data_engraver           % Main functionality
+%     \consists \Tie_grob_engraver           % Main functionality
 %     \consists \Tie_error_detection_engraver % Error detection
 %   }
 % }

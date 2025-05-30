@@ -22,6 +22,6 @@ ls -la MermaidPipeline*.py
 
 echo ""
 echo "🎉 Build complete!"
-echo "💡 You can now run: python tasks_mermaid_utils.py tasks.mmd"
+echo "💡 You can now run: python tasks_mermaid_generator.py"
 echo ""
 echo "📝 Note: Run this script with 'source build_antlr.sh' to use shell aliases"

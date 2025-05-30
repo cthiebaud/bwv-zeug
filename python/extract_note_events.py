@@ -13,6 +13,7 @@ Key Features:
 - Extracts note on/off events with precise timing
 - Handles overlapping notes and note stacking
 - Synchronizes MIDI timeline to match actual audio duration
+- Converts MIDI pitches to LilyPond notation (with proper CSV quoting for comma-containing notation)
 - Outputs timing data suitable for score animation
 - Project-aware file naming with fallback to explicit arguments
 
@@ -21,11 +22,20 @@ Workflow:
 2. Calculate total MIDI duration in ticks
 3. Compute tempo adjustment to match known audio duration
 4. Convert all timing from MIDI ticks to real seconds
-5. Export synchronized timing data as CSV
+5. Convert MIDI pitches to LilyPond notation (properly quoted for CSV format)
+6. Export synchronized timing data as CSV
+
+Example CSV Output:
+pitch,midi,channel,on,off
+"c",60,1,0.0,1.5
+"cis",61,1,1.5,3.0
+"c,",48,1,3.0,4.5
 """
 
 from mido import MidiFile, tick2second
 import pandas as pd
+import csv
+from _scripts_utils import midi_pitch_to_lilypond
 
 def extract_note_intervals(midi_path):
     """
@@ -41,7 +51,8 @@ def extract_note_intervals(midi_path):
         
     Returns:
         pandas.DataFrame: Note events with columns:
-            - pitch: MIDI note number (0-127)
+            - pitch: LilyPond notation string (e.g., "cis'", "f,,") - quoted in CSV due to commas
+            - midi: Original MIDI note number (0-127)
             - on: Start time in seconds (float)
             - off: End time in seconds (float) 
             - channel: MIDI channel number
@@ -51,6 +62,7 @@ def extract_note_intervals(midi_path):
     - Calculates tempo dynamically to match known audio duration
     - Handles both note_on (velocity > 0) and note_off events
     - Treats note_on with velocity=0 as note_off (MIDI standard)
+    - Converts MIDI pitches to LilyPond notation for score alignment
     """
     
     print(f"🎵 Loading MIDI file: {midi_path}")
@@ -95,9 +107,9 @@ def extract_note_intervals(midi_path):
                 
                 # Create completed note event
                 note_event = {
-                    "pitch": message.note,
-                    "on_tick": start_tick,      # Temporary tick-based timing
-                    "off_tick": current_tick,   # Will convert to seconds later
+                    "midi": message.note,           # Original MIDI pitch number
+                    "on_tick": start_tick,          # Temporary tick-based timing
+                    "off_tick": current_tick,       # Will convert to seconds later
                     "channel": channel
                 }
                 note_events.append(note_event)
@@ -128,15 +140,19 @@ def extract_note_intervals(midi_path):
     print(f"   (≈ {60_000_000 / calculated_tempo:.1f} BPM)")
     
     # =================================================================
-    # STEP 4: CONVERT TICK TIMING TO REAL SECONDS
+    # STEP 4: CONVERT TICK TIMING TO REAL SECONDS AND MIDI TO LILYPOND
     # =================================================================
     
     print("🕐 Converting timing from MIDI ticks to seconds...")
+    print("🎼 Converting MIDI pitches to LilyPond notation...")
     
     for note_event in note_events:
         # Convert start and end times using the calculated tempo
         note_event["on"] = tick2second(note_event["on_tick"], ticks_per_beat, calculated_tempo)
         note_event["off"] = tick2second(note_event["off_tick"], ticks_per_beat, calculated_tempo)
+        
+        # Convert MIDI pitch to LilyPond notation
+        note_event["pitch"] = midi_pitch_to_lilypond(note_event["midi"])
         
         # Remove temporary tick-based timing (no longer needed)
         del note_event["on_tick"]
@@ -149,12 +165,15 @@ def extract_note_intervals(midi_path):
     # Convert to DataFrame for easier manipulation and export
     note_events_df = pd.DataFrame(note_events)
     
+    # Reorder columns to match requested format: pitch, midi, channel, on, off
+    note_events_df = note_events_df[["pitch", "midi", "channel", "on", "off"]]
+    
     # Sort by musical priority:
     # 1. Start time (chronological order)
     # 2. Channel (higher channels first - often melody vs accompaniment)
-    # 3. Pitch (ascending - bass to treble within simultaneous events)
+    # 3. MIDI pitch (ascending - bass to treble within simultaneous events)
     note_events_df = note_events_df.sort_values(
-        by=["on", "channel", "pitch"], 
+        by=["on", "channel", "midi"], 
         ascending=[True, False, True]
     )
     
@@ -166,6 +185,12 @@ def extract_note_intervals(midi_path):
         print(f"   📏 Actual final timing: {actual_duration:.2f} seconds")
         print(f"   🎯 Target duration: {audio_duration_seconds} seconds")
         print(f"   📊 Timing accuracy: {abs(actual_duration - audio_duration_seconds):.2f}s difference")
+        
+        # Show some examples of the pitch conversion
+        print("   🎼 Sample pitch conversions:")
+        sample_notes = note_events_df.head(5)
+        for _, note in sample_notes.iterrows():
+            print(f"      MIDI {note['midi']} -> '{note['pitch']}'")
     
     return note_events_df
 
@@ -200,19 +225,23 @@ def main():
         
         # Export results
         print(f"\n💾 Saving synchronized data...")
-        synchronized_notes_df.to_csv(output_file_path, index=False)
+        # Use QUOTE_NONNUMERIC to properly handle LilyPond notation with commas (e.g., "c,", "c,,")
+        # This ensures pitch column values like "c," are quoted as "c," in the CSV
+        synchronized_notes_df.to_csv(output_file_path, index=False, quoting=csv.QUOTE_NONNUMERIC)
         
         # Summary statistics
         total_notes = len(synchronized_notes_df)
         duration = synchronized_notes_df["off"].max() if total_notes > 0 else 0
         unique_pitches = synchronized_notes_df["pitch"].nunique() if total_notes > 0 else 0
+        unique_midi_pitches = synchronized_notes_df["midi"].nunique() if total_notes > 0 else 0
         channels_used = synchronized_notes_df["channel"].nunique() if total_notes > 0 else 0
         
         print(f"✅ Export complete!")
         print(f"   📁 File: {output_file_path}")
         print(f"   🎵 Notes: {total_notes}")
         print(f"   ⏱️  Duration: {duration:.1f} seconds")
-        print(f"   🎹 Pitch range: {unique_pitches} unique pitches")
+        print(f"   🎹 MIDI pitch range: {unique_midi_pitches} unique pitches")
+        print(f"   🎼 LilyPond notation: {unique_pitches} unique representations")
         print(f"   🎚️  Channels: {channels_used}")
         
     except Exception as e:

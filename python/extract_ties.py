@@ -50,8 +50,22 @@ def extract_ties_from_svg(svg_file_path):
                         end_href = find_element_href(target_element)
                         if end_href:
                             end_clean = clean_href_path(end_href)
-                            ties.append((start_clean, end_clean))
-                            print(f"🔗 Found tie: {start_clean} → {end_clean}")
+                            
+                            # VALIDATION: Ensure ties are within the same file and go forward in time
+                            start_file = get_file_from_href(start_clean)
+                            end_file = get_file_from_href(end_clean)
+                            
+                            if start_file == end_file:
+                                # Additional validation: ties must go forward in musical time
+                                if is_valid_forward_tie(start_clean, end_clean):
+                                    ties.append((start_clean, end_clean))
+                                    print(f"🔗 Found tie: {start_clean} → {end_clean}")
+                                else:
+                                    print(f"⚠️  Ignoring invalid backward tie: {start_clean} → {end_clean}")
+                                    print(f"    (Ties must go forward in musical time)")
+                            else:
+                                print(f"⚠️  Ignoring invalid cross-file tie: {start_clean} → {end_clean}")
+                                print(f"    (Ties cannot span different files: {start_file} vs {end_file})")
                         else:
                             print(f"⚠️  Could not find href for target element {target_id}")
                     else:
@@ -59,8 +73,56 @@ def extract_ties_from_svg(svg_file_path):
                 else:
                     print(f"⚠️  Could not find href for tie start element")
     
-    print(f"✅ Extracted {len(ties)} tie relationships")
+    print(f"✅ Extracted {len(ties)} valid tie relationships")
     return ties
+
+def get_file_from_href(href):
+    """Extract the file part from an href reference."""
+    # href format: "file.ly:line:col:col"
+    return href.split(':')[0] if ':' in href else href
+
+def is_valid_forward_tie(start_href, end_href):
+    """
+    Validate that a tie goes forward in musical time.
+    
+    Rules for valid ties:
+    1. End note must be on a line number GREATER than start note line number
+    2. If on the same line, end note must be at a column number GREATER than start note column
+    
+    Args:
+        start_href (str): Starting notehead href (e.g., "file.ly:10:4:5")
+        end_href (str): Ending notehead href (e.g., "file.ly:12:8:9")
+        
+    Returns:
+        bool: True if tie goes forward in time, False otherwise
+    """
+    try:
+        # Parse href format: "file.ly:line:start_col:end_col"
+        start_parts = start_href.split(':')
+        end_parts = end_href.split(':')
+        
+        if len(start_parts) < 3 or len(end_parts) < 3:
+            return False  # Invalid href format
+        
+        start_line = int(start_parts[1])
+        start_col = int(start_parts[2])
+        end_line = int(end_parts[1])
+        end_col = int(end_parts[2])
+        
+        # Rule 1: End line must be greater than start line
+        if end_line > start_line:
+            return True
+        
+        # Rule 2: If same line, end column must be greater than start column
+        if end_line == start_line and end_col > start_col:
+            return True
+        
+        # All other cases are invalid (backward or same position)
+        return False
+        
+    except (ValueError, IndexError):
+        # If we can't parse the href format, assume invalid
+        return False
 
 def find_element_by_id(root, element_id):
     """Find an element by its ID attribute."""
@@ -108,19 +170,31 @@ def load_existing_ties(csv_file_path):
                 else:
                     # No header, treat first row as data
                     if first_row and len(first_row) >= 2:
-                        existing_ties.add((first_row[0], first_row[1]))
+                        # Validate existing ties too
+                        primary, secondary = first_row[0], first_row[1]
+                        if (get_file_from_href(primary) == get_file_from_href(secondary) and 
+                            is_valid_forward_tie(primary, secondary)):
+                            existing_ties.add((primary, secondary))
+                        else:
+                            print(f"⚠️  Removing invalid existing tie: {primary} → {secondary}")
                 
                 # Read remaining rows
                 for row in reader:
                     if len(row) >= 2:
-                        existing_ties.add((row[0], row[1]))
+                        primary, secondary = row[0], row[1]
+                        # Validate existing ties too
+                        if (get_file_from_href(primary) == get_file_from_href(secondary) and
+                            is_valid_forward_tie(primary, secondary)):
+                            existing_ties.add((primary, secondary))
+                        else:
+                            print(f"⚠️  Removing invalid existing tie: {primary} → {secondary}")
                         
         except Exception as e:
             print(f"⚠️  Error reading existing CSV: {e}")
     else:
         print(f"📝 CSV file doesn't exist, will create new: {csv_file_path}")
     
-    print(f"📊 Found {len(existing_ties)} existing tie relationships")
+    print(f"📊 Found {len(existing_ties)} valid existing tie relationships")
     return existing_ties
 
 def save_ties_to_csv(ties, csv_file_path, existing_ties=None):
@@ -193,10 +267,10 @@ def main():
     print()
     
     try:
-        # Load existing ties from CSV
+        # Load existing ties from CSV (with validation)
         existing_ties = load_existing_ties(csv_file)
         
-        # Extract ties from SVG
+        # Extract ties from SVG (with validation)
         new_ties = extract_ties_from_svg(svg_file)
         
         if not new_ties:

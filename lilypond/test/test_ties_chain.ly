@@ -28,6 +28,10 @@
     g'2~ g'2~ |
     g'4 a'4 r2 |
     
+    % 4. Tie chain spanning 2 measures  
+    g'2~ g'2~ |
+    g'4 a'4 r2 |
+
     \bar "|."
   }
   
