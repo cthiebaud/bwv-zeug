@@ -3,7 +3,7 @@
 BWV Processing Tasks - Generic build system for Bach scores
 
 Usage from any BWV project:
-  invoke -f ../bwv-zeug/invoke/tasks.py build_pdf
+  invoke -f <abolute path to>/tasks.py build_pdf
 """
 
 import builtins
@@ -25,25 +25,40 @@ from pathlib import Path
 import subprocess
 
 def detect_project_name():
-    """Detect project name from git repository root directory."""
+    """Detect project name from git repository root directory, fallback to current directory."""
+    project_name = None
+    
+    # Try git first
     try:
         result = subprocess.run(['git', 'rev-parse', '--show-toplevel'], 
                               capture_output=True, text=True, check=True)
-        project_name = Path(result.stdout.strip()).name
+        git_project_name = Path(result.stdout.strip()).name
         
-        # Verify the main .ly file exists
-        main_ly_file = f"{project_name}.ly"
-        if not Path(main_ly_file).exists():
-            raise RuntimeError(f"Main LilyPond file '{main_ly_file}' not found")
-        
-        print(f"🎼 Detected project: {project_name}")
-        return project_name
-        
+        # Check if the main .ly file exists with git name
+        main_ly_file = f"{git_project_name}.ly"
+        if Path(main_ly_file).exists():
+            print(f"🎼 Detected project from git: {git_project_name}")
+            return git_project_name
+        else:
+            print(f"⚠️  Git repo name '{git_project_name}' doesn't match .ly file, trying directory name...")
+            
     except (subprocess.CalledProcessError, FileNotFoundError):
-        raise RuntimeError(
-            "Cannot determine project name: not in a git repository. "
-            "Either run from a git repo or provide explicit file arguments."
-        )
+        print("ℹ️  Not in a git repository, trying directory name...")
+    
+    # Fallback to current directory name
+    project_name = Path.cwd().name
+    main_ly_file = f"{project_name}.ly"
+    
+    if Path(main_ly_file).exists():
+        print(f"🎼 Detected project from current directory: {project_name}")
+        return project_name
+    
+    # If we get here, neither git name nor directory name worked
+    raise RuntimeError(
+        f"Main LilyPond file not found. Tried:\n"
+        f"  - {Path.cwd().name}.ly (current directory)\n"
+        f"Make sure you're in a directory containing a .ly file matching the directory name."
+    )
 
 
 def get_shared_ly_sources_tree(project_name=None):
