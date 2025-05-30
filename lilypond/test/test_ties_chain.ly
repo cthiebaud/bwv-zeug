@@ -26,10 +26,7 @@
     
     % 3. Simple tie chain (3 notes)
     g'2~ g'2~ |
-    g'4 a'4 |
-    
-    % 4. Chord ties
-    <b' d'' f''>2~ <b' d'' f''>2 |
+    g'4 a'4 r2 |
     
     \bar "|."
   }
@@ -37,7 +34,7 @@
   \layout {
     \context {
       \Voice
-      \consists \Tie_data_engraver
+      \consists \Tie_grob_engraver
     }
   }
 }

@@ -369,128 +369,11 @@ def debug_task_mapping(task_id, edges, nodes):
     
     return runnable
 
-
-def generate_tasks_file(listener):
-    """Generate the tasks_generated.py file using a templating approach."""
-    
-    # Template for each task function
-    TASK_TEMPLATE = textwrap.dedent("""\
-        {decorator}
-        def {task_name}(c, force=False):
-            \"\"\"{task_description}.\"\"\"
-        {body}
-    """)
-
-    HEADER = textwrap.dedent("""\
-        #!/usr/bin/env python3
-        \"\"\"
-        Generated Invoke Tasks - Auto-generated from tasks.mmd
-
-        DO NOT EDIT MANUALLY - This file is auto-generated
-        Regenerate with: python tasks_mermaid_utils.py tasks.mmd --generate-tasks
-        \"\"\"
-
-        from invoke import task
-        from pathlib import Path
-        from tasks_utils import smart_task, detect_project_name, flatten_tree, get_shared_ly_sources_tree, run_bwv_script
-
-        # Cache project name at module level - detected only once
-        PROJECT_NAME = detect_project_name()
-
-
-        def shared_ly_sources():
-            \"\"\"Get shared LilyPond source dependencies.\"\"\"
-            return [Path(p) for p in flatten_tree(get_shared_ly_sources_tree(PROJECT_NAME))]
-
-
-    """)
-
-    # Start with the header
-    content = [HEADER]
-
-    # Get all task nodes
-    task_nodes = get_nodes_by_type(listener.nodes, 'T')
-    print(f"🔍 Found {len(task_nodes)} task nodes")
-
-    for task_node in task_nodes:
-        task_id = task_node['id']
-        task_name = task_node['content']
-        task_description = task_node.get('description', task_name.replace('_', ' ').title())
-
-        debug_task_mapping(task_id, listener.edges, listener.nodes)
-
-        dependencies = trace_task_dependencies(task_id, listener.edges, listener.nodes)
-        sources = get_task_sources(task_id, listener.edges, listener.nodes)
-        targets = get_task_targets(task_id, listener.edges, listener.nodes)
-        command = get_task_command(task_id, listener.edges, listener.nodes)
-
-        decorator = f"@task(pre=[{', '.join(dependencies)}])" if dependencies else "@task"
-
-        if command:
-            targets_str = ', '.join(targets) if targets else ''
-            
-            if command.startswith('run_bwv_script'):
-                # Python script
-                commands_param = None
-                python_func_param = f"lambda: {command}"
-            else:
-                # Docker/shell command  
-                commands_param = f"[{command}]"
-                python_func_param = None
-            
-            body = textwrap.dedent(f"""\
-                smart_task(
-                    c,
-                    sources={sources},
-                    targets=[{targets_str}],
-                    commands={commands_param},
-                    python_func={python_func_param},
-                    force=force,
-                )
-            """)
-        else:
-            body = "# TODO: Add implementation - no command found\npass"
-
-        # Indent body to match function block
-        indented_body = textwrap.indent(body, '    ')
-
-        task_code = TASK_TEMPLATE.format(
-            decorator=decorator,
-            task_name=task_name,
-            task_description=task_description,
-            body=indented_body
-        )
-
-        content.append(task_code)
-        content.append("")  # add newline between tasks
-
-    # Generate the 'all' meta-task that runs all final exports
-    final_tasks = get_final_tasks_from_listener(listener)
-    
-    if final_tasks:
-        print(f"🎯 Adding 'all' task with dependencies: {', '.join(final_tasks)}")
-        
-        # Build the body that calls each task with force parameter using template
-        task_calls = '\n'.join(f"{task}(c, force=force)" for task in final_tasks)
-        body = f"""{task_calls}\nprint("🎉 All pipeline outputs completed!")"""
-        
-        all_task_code = TASK_TEMPLATE.format(
-            decorator="@task",
-            task_name="all",
-            task_description="Build all final outputs by running the complete pipeline",
-            body=textwrap.indent(body, '    ')
-        )
-        
-        content.append(all_task_code)
-        content.append("")
-
-    return '\n'.join(content)
-
 # =============================================================================
 # PARSER FUNCTIONS
 # =============================================================================
 
-def parse_and_display_mermaid(mermaid_file: str, generate_tasks: bool = False):
+def parse_and_display_mermaid(mermaid_file: str):
     """Parse mermaid file and display its contents using ANTLR."""
     print(f"🚀 Mermaid Utils v{VERSION}")
     print(f"📄 Processing file: {mermaid_file}")
@@ -527,16 +410,8 @@ def parse_and_display_mermaid(mermaid_file: str, generate_tasks: bool = False):
         walker = ParseTreeWalker()
         walker.walk(listener, tree)
         
-        if generate_tasks:
-            # Generate tasks file
-            tasks_content = generate_tasks_file(listener)
-            tasks_file = Path('tasks_generated.py')
-            tasks_file.write_text(tasks_content)
-            print(f"✅ Generated: {tasks_file}")
-            print(f"📋 Contains {len(get_nodes_by_type(listener.nodes, 'T'))} task definitions")
-        else:
-            # Display results
-            display_full_parsed_content(listener)
+        # Display results
+        display_full_parsed_content(listener)
         
     except Exception as e:
         print(f"❌ Error parsing mermaid file: {e}")
@@ -792,11 +667,10 @@ def get_final_tasks_from_listener(listener):
 # =============================================================================
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python tasks_mermaid_utils.py <mermaid_file.mmd> [--generate-tasks]")
+    if len(sys.argv) < 1:
+        print("Usage: python tasks_mermaid_utils.py <mermaid_file.mmd>")
         sys.exit(1)
     
     mermaid_file = sys.argv[1]
-    generate_tasks = '--generate-tasks' in sys.argv
     
-    parse_and_display_mermaid(mermaid_file, generate_tasks)
+    parse_and_display_mermaid(mermaid_file)

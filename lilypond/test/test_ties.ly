@@ -17,7 +17,7 @@
       \time 2/4
       
       % Simple ties
-      c'2~ | c'4 d'4 |
+      c'2 | c'4 ~ c'4 |
       
       % More complex ties across bar lines
       e'1~ |
@@ -36,22 +36,22 @@
     
     \new Staff = "lower" {
       \clef bass
-      \time 4/4
+      \time 2/4
       
       % Bass line with ties
-      c2~ c4 d4 |
+      c2~ | c4 d4 |
       
       % Long ties in bass
-      e1~ |
-      e2 f2~ |
-      f4 g2.~ |
+      e2~ |
+      e2 | f2~ |
+      f4 r | g2.~ |
       g1 |
       
       % Bass chord ties
-      <c e g>2~ <c e g>2 |
+      % <c e g>2~ | <c e g>2 |
       
       % Mixed patterns
-      a,4~ a,8 b,8 c4 d4 |
+      a,4~ a,8 b,8 | c4 d4 |
       
       \bar "|."
     }
@@ -60,7 +60,7 @@
   \layout {
     \context {
       \Voice
-      \consists \Tie_data_engraver
+      \consists \Tie_grob_engraver
     }
   }
   

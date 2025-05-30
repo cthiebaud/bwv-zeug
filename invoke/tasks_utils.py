@@ -278,6 +278,8 @@ def smart_task(c, *, sources, targets, commands=None, python_func=None, force=Fa
                 # Run subprocess commands with unbuffered output for better logging
                 if cmd.startswith('python3 '):
                     cmd = cmd.replace('python3 ', 'python3 -u ')
+                print("##############")
+                print(f"{cmd}")
                 c.run(cmd)
         
         elif python_func:

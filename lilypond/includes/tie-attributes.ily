@@ -1,91 +1,85 @@
-% tie-attributes.ily
-% Add 'data-tie' attributes to tied note heads with proper href references
+% tie-attributes.ily - Fixed version for tie chains
+% The middle note in a tie chain needs to be both an end and a start
 
-#(define (make-tie-data-engraver)
-   "Create an engraver that adds data-tie attributes to tied note heads"
+#(define (find-note-head-in-bound bound-obj)
+   "Find a NoteHead grob within or associated with a bound object"
+   (cond
+    ((not (ly:grob? bound-obj)) #f)
+    ((memq 'note-head-interface (ly:grob-interfaces bound-obj))
+     bound-obj)
+    ((memq 'note-column-interface (ly:grob-interfaces bound-obj))
+     (let ((note-heads (ly:grob-object bound-obj 'note-heads)))
+       (if (ly:grob-array? note-heads)
+           (let ((heads-list (ly:grob-array->list note-heads)))
+             (if (pair? heads-list)
+                 (car heads-list)
+                 #f))
+           #f)))
+    (else
+     (let ((elements (ly:grob-property bound-obj 'elements #f)))
+       (if (ly:grob-array? elements)
+           (let ((elements-list (ly:grob-array->list elements)))
+             (find (lambda (elem) 
+                     (and (ly:grob? elem)
+                          (memq 'note-head-interface (ly:grob-interfaces elem))))
+                   elements-list))
+           #f)))))
+
+#(define (safe-add-attribute attrs key value)
+   "Add attribute to alist, replacing if it already exists"
+   (let ((existing (assoc key attrs)))
+     (if existing
+         (acons key value (alist-delete key attrs))
+         (acons key value attrs))))
+
+#(define (make-tie-grob-engraver)
+   "Create an engraver that intercepts Tie grobs after they're fully constructed"
    (lambda (context)
-     (let ((note-counter 0)
-           (pending-ties '())
-           (completed-ties '()))
+     (let ((processed-ties '())
+           (note-to-ids (make-hash-table 31)))  ; Track multiple IDs per note
        (make-engraver
-        (acknowledgers
-         ((note-head-interface engraver grob source-engraver)
-          (display (format #f ">>> Note head found: ~a\n" grob))
-          (let* ((cause (ly:grob-property grob 'cause))
-                 (pitch (and cause (ly:event-property cause 'pitch #f)))
-                 (articulations (and cause (ly:event-property cause 'articulations '())))
-                 (music-cause (and cause (ly:event-property cause 'music-cause #f)))
-                 (music-articulations (and music-cause (ly:music-property music-cause 'articulations '()))))
+        (end-acknowledgers
+         ((tie-interface engraver grob source-engraver)
+          (let* ((left-bound (ly:spanner-bound grob LEFT))
+                 (right-bound (ly:spanner-bound grob RIGHT)))
             
-            (display (format #f ">>> Note head pitch: ~a\n" pitch))
-            (display (format #f ">>> Stream event articulations: ~a\n" articulations))
-            (display (format #f ">>> Music cause: ~a\n" music-cause))
-            (display (format #f ">>> Music articulations: ~a\n" music-articulations))
-            
-            (let ((has-tie (or (any (lambda (art)
-                                      (and (ly:event? art)
-                                           (eq? (ly:event-property art 'name) 'TieEvent)))
-                                    articulations)
-                               (any (lambda (art)
-                                      (and (ly:music? art)
-                                           (eq? (ly:music-property art 'name) 'TieEvent)))
-                                    music-articulations))))
-              
-              (display (format #f ">>> Note head has tie: ~a\n" has-tie))
-              
-              (set! note-counter (+ note-counter 1))
-              (let ((note-id (format #f "notehead-~a" note-counter)))
-                (display (format #f ">>> Set note head ID: ~a\n" note-id))
+            (when (and left-bound right-bound
+                       (ly:grob? left-bound)
+                       (ly:grob? right-bound))
+              (let ((left-note-head (find-note-head-in-bound left-bound))
+                    (right-note-head (find-note-head-in-bound right-bound)))
                 
-                (let ((existing-attrs (ly:grob-property grob 'output-attributes '()))
-                      (role "none"))
-                  
-                  ;; ADD THE ID TO OUTPUT-ATTRIBUTES (this was missing!)
-                  (set! existing-attrs (acons "id" note-id existing-attrs))
-                  
-                  (display ">>> Checking if this note head completes any pending ties\n")
-                  (let ((matching-tie (find (lambda (pending)
-                                              (let ((pending-pitch (caddr pending)))
-                                                (and pending-pitch pitch
-                                                     (equal? pending-pitch pitch))))
-                                            pending-ties)))
-                    (when matching-tie
-                      (let ((tie-start-grob (car matching-tie))
-                            (tie-start-id (cadr matching-tie)))
-                        (display (format #f ">>> Found matching tie! ~a -> ~a\n" tie-start-id note-id))
-                        
-                        (set! role "end")
-                        (set! existing-attrs (acons "data-tie-from" (string-append "#" tie-start-id) existing-attrs))
-                        
-                        ;; Update the start grob's output-attributes, ensuring it has an id too
-                        (ly:grob-set-property! tie-start-grob 'output-attributes
-                                               (let ((start-attrs (ly:grob-property tie-start-grob 'output-attributes '())))
-                                                 ;; Make sure start grob has its id in output-attributes
-                                                 (let ((start-attrs-with-id 
-                                                        (if (assoc "id" start-attrs)
-                                                            start-attrs
-                                                            (acons "id" tie-start-id start-attrs))))
-                                                   ;; Add the tie-to and role attributes
-                                                   (acons "data-tie-to" (string-append "#" note-id)
-                                                          (if (assoc "data-tie-role" start-attrs-with-id)
-                                                              start-attrs-with-id
-                                                              (acons "data-tie-role" "start" start-attrs-with-id))))))
-                        
-                        (set! pending-ties (remove (lambda (p) (eq? p matching-tie)) pending-ties))
-                        (set! completed-ties (cons (list tie-start-grob grob tie-start-id note-id) completed-ties)))))
-                  
-                  (when has-tie
-                    (display ">>> This note head starts a tie - storing as pending\n")
-                    (set! pending-ties (cons (list grob note-id pitch) pending-ties))
+                (when (and left-note-head right-note-head
+                           (ly:grob? left-note-head)
+                           (ly:grob? right-note-head))
+                  (let ((tie-id (length processed-ties)))
                     
-                    (if (string=? role "end")
-                        (set! role "both")
-                        (set! role "start")))
-                  
-                  (when (not (string=? role "none"))
-                    (set! existing-attrs (acons "data-tie-role" role existing-attrs))
-                    (display (format #f ">>> Final role for ~a: ~a\n" note-id role)))
-                  
-                  (ly:grob-set-property! grob 'output-attributes existing-attrs)))))))))))
+                    ;; Get or create IDs for the note heads
+                    (let ((left-start-id (or (hash-ref note-to-ids left-note-head)
+                                             (let ((new-id (format #f "tie-note-~a-start" tie-id)))
+                                               (hash-set! note-to-ids left-note-head new-id)
+                                               new-id)))
+                          (right-end-id (format #f "tie-note-~a-end" tie-id)))
+                      
+                      ;; Store the right note's end ID
+                      (hash-set! note-to-ids right-note-head right-end-id)
+                      
+                      ;; Add attributes to left note head (tie start)
+                      (let ((left-attrs (ly:grob-property left-note-head 'output-attributes '())))
+                        (set! left-attrs (safe-add-attribute left-attrs "id" left-start-id))
+                        (set! left-attrs (safe-add-attribute left-attrs "data-tie-role" 
+                                                           (if (assoc "data-tie-role" left-attrs) "both" "start")))
+                        (set! left-attrs (safe-add-attribute left-attrs "data-tie-to" (string-append "#" right-end-id)))
+                        (ly:grob-set-property! left-note-head 'output-attributes left-attrs))
+                      
+                      ;; Add attributes to right note head (tie end) 
+                      (let ((right-attrs (ly:grob-property right-note-head 'output-attributes '())))
+                        (set! right-attrs (safe-add-attribute right-attrs "id" right-end-id))
+                        (set! right-attrs (safe-add-attribute right-attrs "data-tie-role"
+                                                            (if (assoc "data-tie-role" right-attrs) "both" "end")))
+                        (set! right-attrs (safe-add-attribute right-attrs "data-tie-from" (string-append "#" left-start-id)))
+                        (ly:grob-set-property! right-note-head 'output-attributes right-attrs))
+                      
+                      (set! processed-ties (cons (list grob left-note-head right-note-head left-start-id right-end-id) processed-ties))))))))))))))
 
-Tie_data_engraver = #(make-tie-data-engraver)
+Tie_grob_engraver = #(make-tie-grob-engraver)
