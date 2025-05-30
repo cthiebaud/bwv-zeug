@@ -36,7 +36,7 @@ def main():
         project_name = get_project_name()
         midi_csv = f"{project_name}_note_events.csv" 
         svg_csv = f"{project_name}_note_heads.csv"
-        ties_csv = f"{project_name}_csv_ties.csv"
+        ties_csv = f"{project_name}_ties.csv"
         output_json = f"exports/{project_name}_json_notes.json"
         
     except ImportError:
