@@ -1,91 +1,93 @@
-% tie-attributes.ily - Fixed version for tie chains with unique IDs
-% The middle note in a tie chain needs to be both an end and a start
+% highlight-bars.ily
+% Auto-highlight each measure with a cycling color.
+% Includes special handling for pickup measures (\partial)
+% Now accepts parameters for colors and color selection logic
 
-#(define (find-note-head-in-bound bound-obj)
-   "Find a NoteHead grob within or associated with a bound object"
-   (cond
-    ((not (ly:grob? bound-obj)) #f)
-    ((memq 'note-head-interface (ly:grob-interfaces bound-obj))
-     bound-obj)
-    ((memq 'note-column-interface (ly:grob-interfaces bound-obj))
-     (let ((note-heads (ly:grob-object bound-obj 'note-heads)))
-       (if (ly:grob-array? note-heads)
-           (let ((heads-list (ly:grob-array->list note-heads)))
-             (if (pair? heads-list)
-                 (car heads-list)
-                 #f))
-           #f)))
-    (else
-     (let ((elements (ly:grob-property bound-obj 'elements #f)))
-       (if (ly:grob-array? elements)
-           (let ((elements-list (ly:grob-array->list elements)))
-             (find (lambda (elem) 
-                     (and (ly:grob? elem)
-                          (memq 'note-head-interface (ly:grob-interfaces elem))))
-                   elements-list))
-           #f)))))
+#(define* (make-auto-measure-highlight-engraver
+           #:optional
+           (colors '("lightblue" "lightgreen" "lightyellow" "lightpink"))
+           (color-index-fn #f))
+   "Create an auto measure highlight engraver with customizable colors and indexing.
+   
+   Arguments:
+   - colors: list of color strings (default: standard 4-color cycle)
+   - color-index-fn: function that takes bar-number and returns color index
+                     (default: simple modulo cycling)
+   
+   Usage examples:
+   1. Default colors: (make-auto-measure-highlight-engraver)
+   2. Custom colors: (make-auto-measure-highlight-engraver '(\"red\" \"blue\" \"green\"))
+   3. Custom colors + indexing: (make-auto-measure-highlight-engraver 
+                                  '(\"red\" \"blue\" \"green\")
+                                  (lambda (bar) (if (even? bar) 0 1)))"
 
-#(define (safe-add-attribute attrs key value)
-   "Add attribute to alist, replacing if it already exists"
-   (let ((existing (assoc key attrs)))
-     (if existing
-         (acons key value (alist-delete key attrs))
-         (acons key value attrs))))
+   (let ((default-color-index-fn (lambda (bar-num colors-list)
+                                   (modulo bar-num (length colors-list)))))
+     (lambda (context)
+       (let ((last-bar -1)
+             (color-list colors)
+             (get-color-index (or color-index-fn default-color-index-fn)))
+         (make-engraver
+          ((process-music engraver)
+           (let* ((raw-bar     (ly:context-property context 'currentBarNumber 0))
+                  (pos         (ly:context-property context 'measurePosition (ly:make-moment 0)))
+                  ;; Treat negative measure positions (pickup) as bar 0
+                  (current-bar (if (negative? (ly:moment-main-numerator pos)) 0 raw-bar)))
 
-#(define (generate-unique-tie-id)
-   "Generate a globally unique tie ID using timestamp and random component"
-   (let* ((timestamp (number->string (inexact->exact (round (* (current-time) 1000)))))
-          (random-part (number->string (random 10000))))
-     (string-append timestamp "-" random-part)))
+             ;; Debug: print bar status
+             ;; (display
+             ;;   (format #f ">>> raw = ~a, moment = ~a, numerator = ~a~%"
+             ;;           raw-bar pos (ly:moment-main-numerator pos)))
+             ;; (display (format #f ">>> Tick: raw = ~a, effective = ~a, pos = ~a, last = ~a~%"
+             ;;                  raw-bar current-bar pos last-bar))
 
-#(define (make-tie-grob-engraver)
-   "Create an engraver that intercepts Tie grobs after they're fully constructed"
-   (lambda (context)
-     (let ((processed-ties '())
-           (note-to-ids (make-hash-table 31)))  ; Track multiple IDs per note
-       (make-engraver
-        (end-acknowledgers
-         ((tie-interface engraver grob source-engraver)
-          (let* ((left-bound (ly:spanner-bound grob LEFT))
-                 (right-bound (ly:spanner-bound grob RIGHT)))
-            
-            (when (and left-bound right-bound
-                       (ly:grob? left-bound)
-                       (ly:grob? right-bound))
-              (let ((left-note-head (find-note-head-in-bound left-bound))
-                    (right-note-head (find-note-head-in-bound right-bound)))
-                
-                (when (and left-note-head right-note-head
-                           (ly:grob? left-note-head)
-                           (ly:grob? right-note-head))
-                  (let ((unique-id (generate-unique-tie-id)))
-                    
-                    ;; Get or create IDs for the note heads using unique base
-                    (let ((left-start-id (or (hash-ref note-to-ids left-note-head)
-                                             (let ((new-id (format #f "tie-~a-start" unique-id)))
-                                               (hash-set! note-to-ids left-note-head new-id)
-                                               new-id)))
-                          (right-end-id (format #f "tie-~a-end" unique-id)))
-                      
-                      ;; Store the right note's end ID
-                      (hash-set! note-to-ids right-note-head right-end-id)
-                      
-                      ;; Add attributes to left note head (tie start)
-                      (let ((left-attrs (ly:grob-property left-note-head 'output-attributes '())))
-                        (set! left-attrs (safe-add-attribute left-attrs "id" left-start-id))
-                        (set! left-attrs (safe-add-attribute left-attrs "data-tie-role" 
-                                                           (if (assoc "data-tie-role" left-attrs) "both" "start")))
-                        (set! left-attrs (safe-add-attribute left-attrs "data-tie-to" (string-append "#" right-end-id)))
-                        (ly:grob-set-property! left-note-head 'output-attributes left-attrs))
-                      
-                      ;; Add attributes to right note head (tie end) 
-                      (let ((right-attrs (ly:grob-property right-note-head 'output-attributes '())))
-                        (set! right-attrs (safe-add-attribute right-attrs "id" right-end-id))
-                        (set! right-attrs (safe-add-attribute right-attrs "data-tie-role"
-                                                            (if (assoc "data-tie-role" right-attrs) "both" "end")))
-                        (set! right-attrs (safe-add-attribute right-attrs "data-tie-from" (string-append "#" left-start-id)))
-                        (ly:grob-set-property! right-note-head 'output-attributes right-attrs))
-                      
-                      (set! processed-ties (cons (list grob left-note-head right-note-head left-start-id right-end-id) processed-ties))))))))))))))
+             (when (> current-bar last-bar)
+               ;; (newline)
+               (let* ((color-idx (get-color-index current-bar color-list))
+                      (color (list-ref color-list color-idx))
+                      (start (ly:make-stream-event
+                              (ly:make-event-class 'staff-highlight-event)
+                              (list (cons 'span-direction START)
+                                    (cons 'color color)
+                                    (cons 'bar-number current-bar)))))
+                 ;; (display (format #f ">>> Highlighting bar ~a with ~a" current-bar color))
+                 (ly:broadcast (ly:context-event-source context) start))
+               (set! last-bar current-bar)))))))))
 
-Tie_grob_engraver = #(make-tie-grob-engraver)
+% Convenience function for backward compatibility
+Auto_measure_highlight_engraver = #(make-auto-measure-highlight-engraver)
+
+% Example usage functions for common patterns:
+
+#(define (make-alternating-highlight-engraver color1 color2)
+   "Create engraver that alternates between two colors"
+   (make-auto-measure-highlight-engraver
+    (list color1 color2)))
+
+#(define (make-conditional-highlight-engraver colors condition-fn)
+   "Create engraver with colors chosen by a condition function.
+   condition-fn should take bar-number and return color index"
+   (make-auto-measure-highlight-engraver colors condition-fn))
+
+#(define (make-grouping-highlight-engraver colors group-size)
+   "Create engraver that groups measures (e.g., 4 bars per color)"
+   (make-auto-measure-highlight-engraver
+    colors
+    (lambda (bar-num colors-list)
+      (modulo (quotient bar-num group-size) (length colors-list)))))
+
+% Keep the existing add-data-bar-to-highlight function unchanged
+#(define (add-data-bar-to-highlight grob)
+   (let* ((ev     (ly:grob-property grob 'cause))
+          (clazz  (and ev (ly:event-property ev 'class)))
+          (bar-num (and ev (ly:event-property ev 'bar-number))))
+     ;; (display
+     ;;  (format #f ">>>> event class: ~a, bar-num: ~a~%"
+     ;;          clazz
+     ;;          (if (number? bar-num) bar-num "NOT A NUMBER")))
+     (when (and (list? clazz)
+                (member 'staff-highlight-event clazz)
+                (number? bar-num))
+       (ly:grob-set-property! grob 'output-attributes
+                              (list (cons "data-bar" (number->string bar-num)))))
+     '()))
