@@ -163,7 +163,7 @@ def smart_print(*args, **kwargs):
 
 # Globally replace the built-in print function
 # This affects ALL Python code in this process, including imported modules and scripts
-builtins.print = smart_print
+# builtins.print = smart_print
 
 # ==============================================================================
 # GENTLE ERROR HANDLING

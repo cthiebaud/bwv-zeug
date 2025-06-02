@@ -9,8 +9,7 @@
    (equal? (ly:get-option 'backend) 'svg))
 
 \header {
-  title = "Test Ties with Data Attributes"
-  subtitle = "Testing data-tie attributes on tied note heads with grouped staves"
+  tagline = ##f
 }
 
 \book {

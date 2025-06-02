@@ -88,16 +88,39 @@ def extract_note_intervals(midi_path):
     # STEP 2: PROCESS ALL MIDI MESSAGES SEQUENTIALLY  
     # =================================================================
     
-    for message in midi_file:
-        # Advance timeline by message's delta time
-        current_tick += message.time
-        
+    # =================================================================
+    # STEP 2: PROCESS ALL MIDI MESSAGES SEQUENTIALLY  
+    # =================================================================
+    
+    # Collect all messages from all tracks with their absolute tick times
+    all_messages = []
+    
+    for track_idx, track in enumerate(midi_file.tracks):
+        current_tick = 0
+        for message in track:
+            # Advance timeline by message's delta time (in raw ticks)
+            current_tick += message.time
+            
+            # Only process note events (skip meta messages)
+            if hasattr(message, 'note'):
+                all_messages.append((current_tick, message))
+            
+            # Track maximum tick value across all tracks
+            max_tick = max(max_tick, current_tick)
+    
+    # Sort all messages by absolute tick time for chronological processing
+    all_messages.sort(key=lambda x: x[0])
+    
+    print(f"   🎵 Processing {len(all_messages)} note messages from {len(midi_file.tracks)} tracks")
+    
+    # Process messages in chronological order
+    for abs_tick, message in all_messages:
         # Handle note start events
         if message.type == 'note_on' and message.velocity > 0:
             # Push note onto stack (handles multiple simultaneous notes of same pitch)
             if message.note not in note_stack:
                 note_stack[message.note] = []
-            note_stack[message.note].append((current_tick, message.channel))
+            note_stack[message.note].append((abs_tick, message.channel))
             
         # Handle note end events (note_off OR note_on with velocity=0)
         elif message.type in ('note_off', 'note_on') and message.velocity == 0:
@@ -108,17 +131,31 @@ def extract_note_intervals(midi_path):
                 # Create completed note event with original MIDI timing
                 note_event = {
                     "midi": message.note,           # Original MIDI pitch number
-                    "on_tick": start_tick,          # Start time in MIDI ticks
-                    "off_tick": current_tick,       # End time in MIDI ticks
+                    "on_tick": int(start_tick),     # Start time in MIDI ticks (ensure integer)
+                    "off_tick": int(abs_tick),      # End time in MIDI ticks (ensure integer)
                     "channel": channel
                 }
                 note_events.append(note_event)
-        
-        # Track maximum tick value to determine total MIDI duration
-        max_tick = max(max_tick, current_tick)
     
     print(f"   🎹 Extracted {len(note_events)} note events")
     print(f"   ⏱️  MIDI duration: {max_tick} ticks")
+    
+    # Verify all tick values are integers
+    if note_events:
+        sample_note = note_events[0]
+        print(f"   🔍 Tick verification: on_tick={sample_note['on_tick']} (type: {type(sample_note['on_tick'])})")
+        print(f"   🔍 Tick verification: off_tick={sample_note['off_tick']} (type: {type(sample_note['off_tick'])})")
+        
+        # Check for any non-integer values
+        non_integers = []
+        for i, note in enumerate(note_events[:10]):  # Check first 10 notes
+            if not isinstance(note['on_tick'], int) or not isinstance(note['off_tick'], int):
+                non_integers.append(i)
+        
+        if non_integers:
+            print(f"   ⚠️  Warning: Found non-integer tick values in notes: {non_integers}")
+        else:
+            print(f"   ✅ All tick values are integers")
     
     # =================================================================
     # STEP 3: CONVERT MIDI PITCHES TO LILYPOND NOTATION

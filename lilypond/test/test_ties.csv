@@ -1,12 +1,1 @@
 primary,secondary
-test-main.ly:11:4:5,test-main.ly:11:10:11
-test-main.ly:14:11:12,test-main.ly:15:4:5
-test-main.ly:14:4:5,test-main.ly:14:11:12
-test-main.ly:15:10:11,test-main.ly:16:4:5
-test-main.ly:16:12:13,test-main.ly:17:4:5
-test-main.ly:20:4:5,test-main.ly:20:9:10
-test-main.ly:30:4:5,test-main.ly:31:4:5
-test-main.ly:34:4:5,test-main.ly:35:4:5
-test-main.ly:35:9:10,test-main.ly:36:4:5
-test-main.ly:36:11:12,test-main.ly:37:4:5
-test-main.ly:40:4:5,test-main.ly:40:9:10

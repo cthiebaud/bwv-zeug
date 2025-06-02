@@ -7,23 +7,27 @@ Squash Tied Noteheads for Score Alignment
 
 This script processes SVG noteheads and ties data to create a squashed dataset
 where only primary noteheads remain, but each primary includes a list of all
-its tied secondary noteheads. This eliminates the need for tie grouping logic
-in downstream alignment scripts.
+its tied secondary noteheads. It also handles duplicate noteheads (same pitch 
+and position) by merging them into a single entry.
+
+IMPORTANT: This script preserves the ordering from the input CSV, which should
+already have the correct tolerance-based chord grouping from extract_note_heads.py.
 
 Process:
 1. Load SVG noteheads CSV and ties relationships CSV
 2. Identify all secondary (tied-to) noteheads from ties data
 3. For each primary notehead, collect all tied secondary hrefs
-4. Filter SVG noteheads to keep only primaries, adding tied_hrefs column
-5. Export squashed noteheads CSV with embedded tie group information
+4. Squash duplicate noteheads (same snippet, x, y) by merging hrefs
+5. Filter SVG noteheads to keep only primaries, adding tied_hrefs column
+6. Export squashed noteheads CSV with embedded tie group information (preserving order)
 
 Input Files Required:
-- SVG noteheads CSV (with all noteheads including tied ones)
+- SVG noteheads CSV (with all noteheads including tied ones, pre-sorted with tolerance)
 - Ties relationships CSV (primary -> secondary mappings)
 
 Output:
 - Squashed SVG noteheads CSV (format: snippet,href,x,y,tied_hrefs)
-  where tied_hrefs contains pipe-separated secondary hrefs
+  where tied_hrefs contains pipe-separated secondary hrefs and duplicate hrefs
 """
 
 import pandas as pd
@@ -164,8 +168,10 @@ def main():
         print(f"   Found {len(secondary_hrefs)} secondary tied noteheads")
         
         # Filter to keep only primary noteheads (not secondary to any tie)
+        # IMPORTANT: Use .loc to preserve original order from extract_note_heads.py
         original_count = len(svg_df)
-        primary_noteheads = svg_df[~svg_df["href"].isin(secondary_hrefs)].copy()
+        primary_mask = ~svg_df["href"].isin(secondary_hrefs)
+        primary_noteheads = svg_df.loc[primary_mask].copy()
         filtered_count = len(primary_noteheads)
         removed_count = original_count - filtered_count
         
@@ -206,20 +212,79 @@ def main():
         print(f"   🔗 {total_tied_hrefs} total secondary hrefs embedded")
 
         # =================================================================
-        # STEP 4: SORT SQUASHED NOTEHEADS
+        # STEP 4: SQUASH DUPLICATE NOTEHEADS (SAME POSITION & PITCH)
         # =================================================================
 
-        print("📐 Sorting squashed noteheads by visual position...")
+        print("🔄 Squashing duplicate noteheads with same pitch and position...")
+        
+        # Find duplicate groups by (snippet, x, y)
+        primary_noteheads['group_key'] = (
+            primary_noteheads['snippet'].astype(str) + '|' + 
+            primary_noteheads['x'].round(3).astype(str) + '|' + 
+            primary_noteheads['y'].round(3).astype(str)
+        )
+        
+        duplicates_squashed = 0
+        rows_to_drop = []
+        
+        # Process each group
+        for group_key in primary_noteheads['group_key'].unique():
+            group_rows = primary_noteheads[primary_noteheads['group_key'] == group_key]
+            
+            if len(group_rows) > 1:
+                # Multiple noteheads at same position - squash them
+                duplicates_squashed += len(group_rows) - 1
+                
+                # Get the first occurrence (primary)
+                primary_idx = group_rows.index[0]
+                duplicate_indices = group_rows.index[1:]
+                
+                # Collect duplicate hrefs
+                duplicate_hrefs = group_rows.iloc[1:]['href'].tolist()
+                
+                # Merge with existing tied_hrefs
+                existing_tied = primary_noteheads.loc[primary_idx, 'tied_hrefs']
+                if pd.isna(existing_tied) or existing_tied == "":
+                    combined_tied = "|".join(duplicate_hrefs)
+                else:
+                    combined_tied = existing_tied + "|" + "|".join(duplicate_hrefs)
+                
+                # Update the primary row
+                primary_noteheads.loc[primary_idx, 'tied_hrefs'] = combined_tied
+                
+                # Mark duplicate rows for removal
+                rows_to_drop.extend(duplicate_indices)
+                
+                snippet = group_rows.iloc[0]['snippet']
+                x = group_rows.iloc[0]['x']
+                y = group_rows.iloc[0]['y']
+                print(f"   🔄 Squashed {len(group_rows)} '{snippet}' notes at ({x:.1f}, {y:.1f})")
+        
+        # Remove duplicate rows while preserving order
+        if rows_to_drop:
+            primary_noteheads = primary_noteheads.drop(rows_to_drop).reset_index(drop=True)
+        
+        # Clean up temporary column
+        primary_noteheads = primary_noteheads.drop('group_key', axis=1)
+        
+        if duplicates_squashed > 0:
+            print(f"   📊 Squashed {duplicates_squashed} duplicate noteheads")
+            print(f"   ✅ Final count: {len(primary_noteheads)} unique notes")
+        else:
+            print(f"   ✅ No duplicate noteheads found")
 
-        # Sort noteheads by visual reading order:
-        # 1. Primary sort: x-coordinate (left to right across the staff)  
-        # 2. Secondary sort: y-coordinate (top to bottom, hence descending)
-        primary_noteheads = primary_noteheads.sort_values(
-            by=["x", "y"], 
-            ascending=[True, False]
-        ).reset_index(drop=True)
+        # =================================================================
+        # PRESERVE ORDERING (NO RE-SORTING)
+        # =================================================================
 
-        print(f"   🎯 Sorted {len(primary_noteheads)} squashed noteheads in reading order")
+        print("📐 Preserving tolerance-based ordering from input...")
+        
+        # DO NOT re-sort here! The input noteheads CSV already has the correct
+        # tolerance-based ordering from extract_note_heads.py that properly
+        # handles chord grouping. Re-sorting would destroy this careful work.
+
+        print(f"   🎯 Preserved order for {len(primary_noteheads)} squashed noteheads")
+        print(f"   ℹ️  Ordering was calculated with chord tolerance in extract_note_heads.py")
 
         # =================================================================
         # OUTPUT GENERATION
@@ -246,6 +311,7 @@ def main():
             print(f"   📏 Coordinate range: {x_range:.1f} x {y_range:.1f}")
             print(f"   🔗 Notes with ties: {tied_notes_count}")
             print(f"   📊 Total embedded secondaries: {total_tied_hrefs}")
+            print(f"   🎯 Order preserved from extract_note_heads.py")
             
             # Show some examples of tie groups
             tied_examples = output_df[output_df["tied_hrefs"] != ""].head(3)
@@ -258,8 +324,9 @@ def main():
             print(f"⚠️  Warning: No noteheads remaining after processing!")
 
         print()
-        print("🎉 Tie squashing completed successfully!")
-        print("🎯 Ready for simplified MIDI-to-SVG alignment in next pipeline stage")
+        print("🎉 Tie squashing and duplicate removal completed successfully!")
+        print("🎯 Ready for simplified MIDI-to-SVG alignment with preserved chord grouping")
+        print("📝 Note: Duplicate noteheads at same position are merged into tied_hrefs")
 
     except FileNotFoundError as e:
         print(f"❌ File error: {e}")
@@ -272,4 +339,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    

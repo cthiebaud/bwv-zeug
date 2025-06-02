@@ -18,3 +18,5 @@ tasks_generated.py
 *.midi
 *.svg
 *.pdf
+
+.DS_Store

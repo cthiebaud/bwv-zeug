@@ -14,8 +14,9 @@ Process Overview:
 1. Parse LilyPond-generated SVG to find clickable notehead elements
 2. Extract pitch information from LilyPond source code via href links (file paths embedded in href)
 3. Determine visual coordinates for each notehead
-4. Create sorted dataset ordered by visual appearance (left-to-right, top-to-bottom)
-5. Export CSV with required arguments for input SVG and output path
+4. Group simultaneous notes (chords) using x-coordinate tolerance
+5. Create sorted dataset ordered by visual appearance (left-to-right, top-to-bottom)
+6. Export CSV with required arguments for input SVG and output path
 
 Input Files:
 - SVG file with embedded LilyPond cross-references (href contains .ly file paths)
@@ -105,6 +106,54 @@ def extract_text_from_href(href):
     except Exception as e:
         return f"(error: {e})"
 
+def group_notes_by_x_tolerance(notes, tolerance=0.0):
+    """
+    Group notes by x-coordinate within tolerance to handle simultaneous notes (chords).
+    
+    LilyPond often places chord notes at slightly different x-coordinates for visual
+    clarity, but they should be treated as simultaneous for MIDI alignment.
+    
+    Args:
+        notes (list): List of notehead dictionaries with x, y coordinates
+        tolerance (float): Maximum x-coordinate difference to consider simultaneous
+        
+    Returns:
+        list: Notes sorted with chord members properly grouped
+    """
+    if not notes:
+        return notes
+        
+
+    print(f"tolerance: ............. {tolerance}")
+    # Sort by x-coordinate first for grouping
+    notes_sorted = sorted(notes, key=lambda n: n["x"])
+    
+    groups = []
+    current_group = [notes_sorted[0]]
+    
+    # Group notes within tolerance
+    for note in notes_sorted[1:]:
+        if abs(note["x"] - current_group[0]["x"]) <= tolerance:
+            # Within tolerance - add to current group
+            current_group.append(note)
+        else:
+            # Outside tolerance - start new group
+            groups.append(current_group)
+            current_group = [note]
+    
+    # Don't forget the last group
+    groups.append(current_group)
+    
+    # Sort within each group by y-coordinate (top to bottom)
+    # and sort groups by their representative x-coordinate
+    result = []
+    for group in groups:
+        # Sort notes within group by y-coordinate (descending = top to bottom)
+        group_sorted = sorted(group, key=lambda n: -n["y"])
+        result.extend(group_sorted)
+    
+    return result
+
 def setup_argument_parser():
     """Setup command line argument parser."""
     parser = argparse.ArgumentParser(
@@ -113,7 +162,8 @@ def setup_argument_parser():
         epilog="""
 Examples:
   python extract_note_heads.py -i score.svg -o noteheads.csv
-  python extract_note_heads.py --input music.svg --output music_note_heads.csv
+  python extract_note_heads.py --input music.svg --output music_note_heads.csv --tolerance 1.5
+  python extract_note_heads.py -i score.svg -o noteheads.csv -t 3.0
         """
     )
     
@@ -124,6 +174,11 @@ Examples:
     parser.add_argument('-o', '--output',
                        required=True, 
                        help='Output CSV file path for noteheads (required)')
+    
+    parser.add_argument('-t', '--tolerance',
+                       type=float,
+                       default=1.0,
+                       help='X-coordinate tolerance for grouping simultaneous notes (default: 2.0)')
     
     return parser.parse_args()
 
@@ -138,9 +193,11 @@ def main():
     
     svg_file = args.input
     output_csv = args.output
+    tolerance = args.tolerance
     
     print(f"📄 Input SVG: {svg_file}")
     print(f"📊 Output CSV: {output_csv}")
+    print(f"📏 Chord tolerance: ±{tolerance} units")
     print()
 
     # =================================================================
@@ -211,18 +268,27 @@ def main():
         print(f"   ✅ Found {len(notehead_data)} valid noteheads with pitch data") 
 
         # =================================================================
-        # SPATIAL SORTING FOR VISUAL ALIGNMENT
+        # SPATIAL SORTING WITH TOLERANCE FOR SIMULTANEOUS NOTES
         # =================================================================
 
-        print("📐 Sorting noteheads by visual position...")
+        print("📐 Sorting noteheads by visual position with chord tolerance...")
 
-        # Sort noteheads by visual reading order:
-        # 1. Primary sort: x-coordinate (left to right across the staff)  
-        # 2. Secondary sort: y-coordinate (top to bottom for simultaneous notes)
-        #    Note: Negative y-coordinate because SVG y=0 is at top, music reads top-to-bottom
-        notehead_data.sort(key=lambda n: (n["x"], -n["y"]))  # descending y = top-to-bottom
+        # Apply tolerance-based sorting
+        notehead_data = group_notes_by_x_tolerance(notehead_data, tolerance=tolerance)
 
-        print(f"   🎯 Sorted {len(notehead_data)} noteheads in reading order")
+        print(f"   🎯 Sorted {len(notehead_data)} noteheads with chord tolerance (±{tolerance} units)")
+        
+        # Show grouping statistics
+        if notehead_data:
+            x_positions = [n["x"] for n in notehead_data]
+            unique_x_groups = 1
+            for i in range(1, len(x_positions)):
+                if abs(x_positions[i] - x_positions[i-1]) > tolerance:
+                    unique_x_groups += 1
+            
+            print(f"   📊 Identified {unique_x_groups} distinct time positions")
+            if unique_x_groups > 0:
+                print(f"   🎵 Average notes per position: {len(notehead_data)/unique_x_groups:.1f}")
 
         # =================================================================
         # CSV EXPORT
@@ -260,7 +326,8 @@ def main():
             print(f"   📏 X-coordinate range: {x_range:.1f} units")
             print(f"   📐 Y-coordinate range: {y_range:.1f} units") 
             print(f"   🎵 Unique pitch notations: {unique_pitches}")
-            print(f"   🔗 Average notes per pitch: {len(notehead_data)/unique_pitches:.1f}")
+            if unique_pitches > 0:
+                print(f"   🔗 Average notes per pitch: {len(notehead_data)/unique_pitches:.1f}")
 
         print()
         print("🎉 Notehead extraction completed successfully!")
