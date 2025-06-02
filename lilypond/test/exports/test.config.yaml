@@ -12,5 +12,6 @@ files:
   audioPath: "test.wav"
   
 musicalStructure:
-  totalDurationSeconds: 25.0
-  totalBars: 8
+  totalDurationSeconds: 7.0
+  totalBars: 4
+  visualLeadTimeSeconds: 0.2  
