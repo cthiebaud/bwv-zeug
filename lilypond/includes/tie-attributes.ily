@@ -83,7 +83,7 @@
                             (right-location (extract-location-string right-origin)))
                         
                         (when (and left-location right-location)
-                          (format #t "Creating tie: ~a -> ~a~%" left-location right-location)
+                          ; (format #t "Creating tie: ~a -> ~a~%" left-location right-location)
                           
                           (let ((left-id (hex-hash left-location))
                                 (right-id (hex-hash right-location)))
