@@ -264,19 +264,19 @@ def main():
         # This ensures pitch column values like "c," are quoted as "c," in the CSV
         note_events_df.to_csv(output_file_path, index=False, quoting=csv.QUOTE_NONNUMERIC)
         
-        # Also save timing metadata as a comment in a separate file for JavaScript to read
-        metadata_file = output_file_path.replace('.csv', '_metadata.json')
-        import json
-        metadata = {
-            "ticks_per_beat": ticks_per_beat,
-            "total_notes": len(note_events_df),
-            "max_tick": int(note_events_df["off_tick"].max()) if len(note_events_df) > 0 else 0,
-            "unique_pitches": int(note_events_df["pitch"].nunique()) if len(note_events_df) > 0 else 0,
-            "channels_used": int(note_events_df["channel"].nunique()) if len(note_events_df) > 0 else 0
-        }
-        
-        with open(metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=2)
+        ## # Also save timing metadata as a comment in a separate file for JavaScript to read
+        ## metadata_file = output_file_path.replace('.csv', '_metadata.json')
+        ## import json
+        ## metadata = {
+        ##     "ticks_per_beat": ticks_per_beat,
+        ##     "total_notes": len(note_events_df),
+        ##     "max_tick": int(note_events_df["off_tick"].max()) if len(note_events_df) > 0 else 0,
+        ##     "unique_pitches": int(note_events_df["pitch"].nunique()) if len(note_events_df) > 0 else 0,
+        ##     "channels_used": int(note_events_df["channel"].nunique()) if len(note_events_df) > 0 else 0
+        ## }
+        ## 
+        ## with open(metadata_file, 'w') as f:
+        ##     json.dump(metadata, f, indent=2)
         
         # Summary statistics
         total_notes = len(note_events_df)
