@@ -287,7 +287,7 @@ def main():
         
         print(f"✅ Export complete!")
         print(f"   📁 Note data: {output_file_path}")
-        print(f"   📁 Metadata: {metadata_file}")
+        ## print(f"   📁 Metadata: {metadata_file}")
         print(f"   🎵 Notes: {total_notes}")
         print(f"   ⏱️  Duration: {max_tick} ticks")
         print(f"   🎯 Resolution: {ticks_per_beat} ticks per beat")
