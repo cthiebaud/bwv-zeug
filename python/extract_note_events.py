@@ -15,7 +15,6 @@ Key Features:
 - Synchronizes MIDI timeline to match actual audio duration
 - Converts MIDI pitches to LilyPond notation (with proper CSV quoting for comma-containing notation)
 - Outputs timing data suitable for score animation
-- Project-aware file naming with fallback to explicit arguments
 
 Workflow:
 1. Parse MIDI file to extract all note events
@@ -35,9 +34,12 @@ pitch,midi,channel,on,off
 from mido import MidiFile, tick2second
 import pandas as pd
 import csv
-from _scripts_utils import midi_pitch_to_lilypond
+import argparse
+import sys
+import os
+from _scripts_utils import midi_pitch_to_lilypond, get_project_name, get_project_config
 
-def extract_note_intervals(midi_path):
+def extract_note_intervals(midi_path, audio_duration_seconds, total_bars):
     """
     Extract note events from a MIDI file and synchronize timing with audio.
     
@@ -48,6 +50,8 @@ def extract_note_intervals(midi_path):
     
     Args:
         midi_path (str): Path to the MIDI file to process
+        audio_duration_seconds (float): Duration of the target audio recording in seconds
+        total_bars (int): Total number of bars in the musical structure
         
     Returns:
         pandas.DataFrame: Note events with columns:
@@ -59,7 +63,7 @@ def extract_note_intervals(midi_path):
             
     Algorithm Details:
     - Uses a note stack to handle overlapping notes of the same pitch
-    - Calculates tempo dynamically to match known audio duration
+    - Uses linear mapping to distribute notes across correct duration (ignores MIDI tempo)
     - Handles both note_on (velocity > 0) and note_off events
     - Treats note_on with velocity=0 as note_off (MIDI standard)
     - Converts MIDI pitches to LilyPond notation for score alignment
@@ -121,35 +125,32 @@ def extract_note_intervals(midi_path):
     print(f"   ⏱️  MIDI duration: {max_tick} ticks")
     
     # =================================================================
-    # STEP 3: SYNCHRONIZE WITH AUDIO DURATION
+    # STEP 3: SYNCHRONIZE WITH AUDIO DURATION USING LINEAR MAPPING
     # =================================================================
-    
-    # *** CRITICAL SYNCHRONIZATION PARAMETER ***
-    # This is the actual duration of the audio recording in seconds.
-    # Adjust this value to match your specific audio file.
-    audio_duration_seconds = 207.10
     
     print(f"🎧 Target audio duration: {audio_duration_seconds} seconds")
+    print(f"🎼 Target bars: {total_bars} bars")
+    print(f"📊 Using linear mapping (ignoring MIDI tempo - may be corrupted)")
     
-    # Calculate the tempo needed to stretch MIDI timeline to match audio
-    # Formula: tempo = (audio_seconds * microseconds_per_second * ticks_per_beat) / max_ticks
-    # Result is in microseconds per beat (MIDI tempo format)
-    calculated_tempo = int(audio_duration_seconds * 1_000_000 * ticks_per_beat / max_tick)
+    # Instead of using MIDI tempo (which may be wrong), use linear mapping
+    # This distributes all note events evenly across the correct duration
+    time_per_bar = audio_duration_seconds / total_bars
     
-    print(f"🎯 Calculated tempo: {calculated_tempo} μs per beat")
-    print(f"   (≈ {60_000_000 / calculated_tempo:.1f} BPM)")
+    print(f"⏱️ Time per bar: {time_per_bar:.3f} seconds")
+    print(f"💡 Linear mapping: tick position → time position")
     
     # =================================================================
-    # STEP 4: CONVERT TICK TIMING TO REAL SECONDS AND MIDI TO LILYPOND
+    # STEP 4: CONVERT TICK TIMING TO REAL SECONDS USING LINEAR MAPPING
     # =================================================================
     
-    print("🕐 Converting timing from MIDI ticks to seconds...")
+    print("🕐 Converting timing using linear mapping...")
     print("🎼 Converting MIDI pitches to LilyPond notation...")
     
     for note_event in note_events:
-        # Convert start and end times using the calculated tempo
-        note_event["on"] = tick2second(note_event["on_tick"], ticks_per_beat, calculated_tempo)
-        note_event["off"] = tick2second(note_event["off_tick"], ticks_per_beat, calculated_tempo)
+        # Use linear mapping: (tick_position / max_tick) * total_duration
+        # This ignores MIDI tempo and distributes events evenly
+        note_event["on"] = (note_event["on_tick"] / max_tick) * audio_duration_seconds
+        note_event["off"] = (note_event["off_tick"] / max_tick) * audio_duration_seconds
         
         # Convert MIDI pitch to LilyPond notation
         note_event["pitch"] = midi_pitch_to_lilypond(note_event["midi"])
@@ -198,30 +199,78 @@ def extract_note_intervals(midi_path):
 # MAIN EXECUTION
 # =============================================================================
 
+def setup_argument_parser():
+    """Setup command line argument parser."""
+    parser = argparse.ArgumentParser(
+        description="Extract MIDI note events and synchronize with audio timeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python extract_note_events.py -i music.midi -o note_events.csv
+  python extract_note_events.py --input bwv1006.midi --output bwv1006_notes.csv
+        """
+    )
+    
+    parser.add_argument('-i', '--input', 
+                       required=True,
+                       help='Input MIDI file path (required)')
+    
+    parser.add_argument('-o', '--output',
+                       required=True, 
+                       help='Output CSV file path for note events (required)')
+    
+    return parser.parse_args()
+
 def main():
-    """Main function with project context support."""
+    """Main function with command line argument support."""
     print("🚀 Starting MIDI-to-Audio synchronization pipeline")
     print("=" * 60)
     
-    try:
-        # Try to use project context system
-        from _scripts_utils import get_io_files
+    # Parse arguments
+    args = setup_argument_parser()
+    
+    midi_file_path = args.input
+    output_file_path = args.output
+    
+    # Load audio duration and bar count from project configuration
+    config = get_project_config(get_project_name())
+    audio_duration_seconds = config.get('musicalStructure', {}).get('totalDurationSeconds')
+    total_bars = config.get('musicalStructure', {}).get('totalBars')
+    
+    if audio_duration_seconds is None:
+        print(f"❌ Error: musicalStructure.totalDurationSeconds not found in project configuration")
+        print(f"   Make sure the project config file exists in exports/ directory with the correct structure")
+        sys.exit(1)
         
-        midi_file_path, output_file_path = get_io_files(
-            "Extract MIDI note events and synchronize with audio timeline",
-            "{project}_ly_one_line.midi",
-            "{project}_note_events.csv"
-        )
-        
-    except ImportError:
-        # Fallback for standalone use
-        print("⚠️  _scripts_utils not available - using default file names")
-        midi_file_path = "bwv1006_ly_one_line.midi"
-        output_file_path = "bwv1006_note_events.csv"
+    if total_bars is None:
+        print(f"❌ Error: musicalStructure.totalBars not found in project configuration")
+        print(f"   Make sure the project config file exists in exports/ directory with the correct structure")
+        sys.exit(1)
+    
+    print(f"📄 Input MIDI: {midi_file_path}")
+    print(f"📊 Output CSV: {output_file_path}")
+    print(f"⏱️ Target duration: {audio_duration_seconds} seconds (from config)")
+    print(f"🎼 Total bars: {total_bars} bars (from config)")
+    print()
+    
+    # Validate input file exists
+    if not os.path.exists(midi_file_path):
+        print(f"❌ Error: Input MIDI file not found: {midi_file_path}")
+        sys.exit(1)
+    
+    # Validate duration is positive
+    if audio_duration_seconds <= 0:
+        print(f"❌ Error: Duration must be positive, got: {audio_duration_seconds}")
+        sys.exit(1)
     
     # Process MIDI file
     try:
-        synchronized_notes_df = extract_note_intervals(midi_file_path)
+        synchronized_notes_df = extract_note_intervals(midi_file_path, audio_duration_seconds, total_bars)
+        
+        # Ensure output directory exists
+        output_dir = os.path.dirname(output_file_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
         
         # Export results
         print(f"\n💾 Saving synchronized data...")
@@ -244,9 +293,14 @@ def main():
         print(f"   🎼 LilyPond notation: {unique_pitches} unique representations")
         print(f"   🎚️  Channels: {channels_used}")
         
+        print()
+        print("🎉 MIDI note extraction completed successfully!")
+        
     except Exception as e:
         print(f"❌ Error processing MIDI file: {e}")
-        raise
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -12,6 +12,7 @@ import argparse
 import csv
 import pandas as pd
 import subprocess
+import yaml
 from pathlib import Path
 from functools import lru_cache
 
@@ -53,10 +54,12 @@ def get_project_name():
     )
 
 @lru_cache(maxsize=None)
-def load_project_config(project_name):
-    """Load and cache project configuration"""
-    config_file = f"{project_name}_config.yaml"
-    if os.path.exists(config_file):
+def get_project_config(project_name):
+    """Load and cache project configuration from exports subdirectory"""
+    project_name = get_project_name()
+    config_file = Path("exports") / f"{project_name}.config.yaml"
+    
+    if config_file.exists():
         with open(config_file) as f:
             return yaml.safe_load(f)
     return {}
