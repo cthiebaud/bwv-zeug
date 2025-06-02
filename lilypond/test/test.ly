@@ -4,6 +4,7 @@
 
 \include "test-main.ly"
 \include "tie-attributes.ily"
+\include "highlight-bars.ily"  % ADD THIS LINE!
 
 #(define is-svg?
    (equal? (ly:get-option 'backend) 'svg))
@@ -26,6 +27,20 @@
       \context {
         \Voice
         \consists \Tie_grob_engraver
+      }
+      \context {
+        \Staff
+        % Add measure highlighting engravers (creates transparent rectangles with data-bar attributes)
+        \consists #Simple_highlight_engraver
+        \consists Staff_highlight_engraver
+        % Add bar timing collector (adds timing data to SVG attributes)
+        \consists #Bar_timing_collector
+      }
+
+      \context {
+        \Score
+        % Add data-bar and data-bar-time attributes to rectangles
+        \override StaffHighlight.after-line-breaking = #add-data-bar-to-highlight
       }
     }
   }

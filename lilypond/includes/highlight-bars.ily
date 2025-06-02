@@ -1,93 +1,83 @@
 % highlight-bars.ily
-% Auto-highlight each measure with a cycling color.
-% Includes special handling for pickup measures (\partial)
-% Now accepts parameters for colors and color selection logic
+% Clean version - creates clean SVG rectangles with timing data attributes
+% JavaScript handles visibility and styling
 
-#(define* (make-auto-measure-highlight-engraver
-           #:optional
-           (colors '("lightblue" "lightgreen" "lightyellow" "lightpink"))
-           (color-index-fn #f))
-   "Create an auto measure highlight engraver with customizable colors and indexing.
+#(define (make-simple-highlight-engraver)
+   "Create a simple engraver that adds clean highlight rectangles with timing data."
    
-   Arguments:
-   - colors: list of color strings (default: standard 4-color cycle)
-   - color-index-fn: function that takes bar-number and returns color index
-                     (default: simple modulo cycling)
+   (lambda (context)
+     (let ((last-bar -1))
+       (make-engraver
+        ((process-music engraver)
+         (let* ((raw-bar     (ly:context-property context 'currentBarNumber 0))
+                (pos         (ly:context-property context 'measurePosition (ly:make-moment 0)))
+                (current-bar (if (negative? (ly:moment-main-numerator pos)) 0 raw-bar)))
+
+           (when (> current-bar last-bar)
+             (let ((start (ly:make-stream-event
+                          (ly:make-event-class 'staff-highlight-event)
+                          (list (cons 'span-direction START)
+                                (cons 'color "lightgrey")
+                                (cons 'bar-number current-bar)))))
+               (ly:broadcast (ly:context-event-source context) start))
+             (set! last-bar current-bar))))))))
+
+% Define the engraver instance
+#(define Simple_highlight_engraver (make-simple-highlight-engraver))
+
+% Bar timing collector - collects raw LilyPond timing data
+#(define bar-timing-data '())
+
+#(define (make-bar-timing-collector)
+   "Create an engraver that collects raw LilyPond timing information."
    
-   Usage examples:
-   1. Default colors: (make-auto-measure-highlight-engraver)
-   2. Custom colors: (make-auto-measure-highlight-engraver '(\"red\" \"blue\" \"green\"))
-   3. Custom colors + indexing: (make-auto-measure-highlight-engraver 
-                                  '(\"red\" \"blue\" \"green\")
-                                  (lambda (bar) (if (even? bar) 0 1)))"
+   (lambda (context)
+     (let ((last-bar -1))
+       (make-engraver
+        ((process-music engraver)
+         (let* ((raw-bar     (ly:context-property context 'currentBarNumber 0))
+                (pos         (ly:context-property context 'measurePosition (ly:make-moment 0)))
+                (current-bar (if (negative? (ly:moment-main-numerator pos)) 0 raw-bar))
+                (current-moment (ly:context-current-moment context)))
 
-   (let ((default-color-index-fn (lambda (bar-num colors-list)
-                                   (modulo bar-num (length colors-list)))))
-     (lambda (context)
-       (let ((last-bar -1)
-             (color-list colors)
-             (get-color-index (or color-index-fn default-color-index-fn)))
-         (make-engraver
-          ((process-music engraver)
-           (let* ((raw-bar     (ly:context-property context 'currentBarNumber 0))
-                  (pos         (ly:context-property context 'measurePosition (ly:make-moment 0)))
-                  ;; Treat negative measure positions (pickup) as bar 0
-                  (current-bar (if (negative? (ly:moment-main-numerator pos)) 0 raw-bar)))
+           ;; Record timing when starting a new bar
+           (when (and (> current-bar last-bar)
+                      (equal? pos (ly:make-moment 0)))
+             (let ((moment-main (ly:moment-main current-moment))
+                   (moment-grace (ly:moment-grace current-moment)))
+               (set! bar-timing-data 
+                     (cons (list current-bar moment-main moment-grace) bar-timing-data))
+               (set! last-bar current-bar)))))
+        
+        ((finalize engraver)
+         (let ((sorted-timings (sort bar-timing-data (lambda (a b) (< (car a) (car b))))))
+           (display (format #f "Collected LilyPond bar timings: ~a\n" sorted-timings))))))))
 
-             ;; Debug: print bar status
-             ;; (display
-             ;;   (format #f ">>> raw = ~a, moment = ~a, numerator = ~a~%"
-             ;;           raw-bar pos (ly:moment-main-numerator pos)))
-             ;; (display (format #f ">>> Tick: raw = ~a, effective = ~a, pos = ~a, last = ~a~%"
-             ;;                  raw-bar current-bar pos last-bar))
+% Define the timing collector instance
+#(define Bar_timing_collector (make-bar-timing-collector))
 
-             (when (> current-bar last-bar)
-               ;; (newline)
-               (let* ((color-idx (get-color-index current-bar color-list))
-                      (color (list-ref color-list color-idx))
-                      (start (ly:make-stream-event
-                              (ly:make-event-class 'staff-highlight-event)
-                              (list (cons 'span-direction START)
-                                    (cons 'color color)
-                                    (cons 'bar-number current-bar)))))
-                 ;; (display (format #f ">>> Highlighting bar ~a with ~a" current-bar color))
-                 (ly:broadcast (ly:context-event-source context) start))
-               (set! last-bar current-bar)))))))))
-
-% Convenience function for backward compatibility
-Auto_measure_highlight_engraver = #(make-auto-measure-highlight-engraver)
-
-% Example usage functions for common patterns:
-
-#(define (make-alternating-highlight-engraver color1 color2)
-   "Create engraver that alternates between two colors"
-   (make-auto-measure-highlight-engraver
-    (list color1 color2)))
-
-#(define (make-conditional-highlight-engraver colors condition-fn)
-   "Create engraver with colors chosen by a condition function.
-   condition-fn should take bar-number and return color index"
-   (make-auto-measure-highlight-engraver colors condition-fn))
-
-#(define (make-grouping-highlight-engraver colors group-size)
-   "Create engraver that groups measures (e.g., 4 bars per color)"
-   (make-auto-measure-highlight-engraver
-    colors
-    (lambda (bar-num colors-list)
-      (modulo (quotient bar-num group-size) (length colors-list)))))
-
-% Keep the existing add-data-bar-to-highlight function unchanged
+% Clean function that adds only the data attributes we need
 #(define (add-data-bar-to-highlight grob)
    (let* ((ev     (ly:grob-property grob 'cause))
           (clazz  (and ev (ly:event-property ev 'class)))
           (bar-num (and ev (ly:event-property ev 'bar-number))))
-     ;; (display
-     ;;  (format #f ">>>> event class: ~a, bar-num: ~a~%"
-     ;;          clazz
-     ;;          (if (number? bar-num) bar-num "NOT A NUMBER")))
      (when (and (list? clazz)
                 (member 'staff-highlight-event clazz)
                 (number? bar-num))
-       (ly:grob-set-property! grob 'output-attributes
-                              (list (cons "data-bar" (number->string bar-num)))))
+       
+       ;; Find timing data for this bar
+       (let ((timing-entry (assoc bar-num bar-timing-data)))
+         (let ((attributes (list (cons "data-bar" (number->string bar-num)))))
+           
+           ;; Add timing attributes if available
+           (when timing-entry
+             (let ((moment-main (cadr timing-entry))
+                   (moment-grace (caddr timing-entry)))
+               (set! attributes 
+                     (append attributes
+                             (list (cons "data-bar-moment-main" (number->string moment-main))
+                                   (cons "data-bar-moment-grace" (number->string moment-grace)))))))
+           
+           ;; Set only the data attributes we want
+           (ly:grob-set-property! grob 'output-attributes attributes))))
      '()))
